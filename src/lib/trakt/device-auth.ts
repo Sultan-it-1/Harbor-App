@@ -1,8 +1,5 @@
-import {
-  TRAKT_API_BASE,
-  TRAKT_CLIENT_ID,
-  TRAKT_CLIENT_SECRET,
-} from "./config";
+import { TRAKT_API_BASE } from "./config";
+import { getTraktKeys, secretField } from "./keys";
 import { setSession } from "./session";
 import type { DeviceCode, TraktSession, TraktUserMe } from "./types";
 
@@ -10,13 +7,21 @@ const baseHeaders = (): HeadersInit => ({
   "Content-Type": "application/json",
 });
 
+/** Shown (translated) when Trakt refuses the user's own Client ID. */
+export const CUSTOM_KEYS_REFUSED =
+  "Trakt didn't accept your Client ID. Check it in Settings → Trakt, or switch back to Harbor's keys.";
+
 export async function requestDeviceCode(): Promise<DeviceCode> {
+  const keys = getTraktKeys();
   const res = await fetch(`${TRAKT_API_BASE}/oauth/device/code`, {
     method: "POST",
     headers: baseHeaders(),
-    body: JSON.stringify({ client_id: TRAKT_CLIENT_ID }),
+    body: JSON.stringify({ client_id: keys.clientId }),
   });
   if (!res.ok) {
+    if (keys.custom && (res.status === 401 || res.status === 403 || res.status === 404)) {
+      throw new Error(CUSTOM_KEYS_REFUSED);
+    }
     throw new Error(`Trakt device-code request failed: HTTP ${res.status}`);
   }
   const data = (await res.json()) as {
@@ -44,13 +49,14 @@ export type PollResult =
   | { kind: "error"; message: string };
 
 async function pollOnce(deviceCode: string): Promise<PollResult> {
+  const keys = getTraktKeys();
   const res = await fetch(`${TRAKT_API_BASE}/oauth/device/token`, {
     method: "POST",
     headers: baseHeaders(),
     body: JSON.stringify({
       code: deviceCode,
-      client_id: TRAKT_CLIENT_ID,
-      client_secret: TRAKT_CLIENT_SECRET,
+      client_id: keys.clientId,
+      ...secretField(keys),
     }),
   });
   if (res.status === 200) {
@@ -129,7 +135,7 @@ export async function fetchUsername(session: TraktSession): Promise<string | nul
     headers: {
       "Content-Type": "application/json",
       "trakt-api-version": "2",
-      "trakt-api-key": TRAKT_CLIENT_ID,
+      "trakt-api-key": getTraktKeys().clientId,
       Authorization: `Bearer ${session.accessToken}`,
     },
   });

@@ -1,4 +1,5 @@
-import { SIMKL_API_BASE, SIMKL_CLIENT_ID } from "./config";
+import { SIMKL_API_BASE } from "./config";
+import { getSimklClientId } from "./keys";
 import { getSession, setSession } from "./session";
 
 export type SimklRequestOptions = {
@@ -19,7 +20,7 @@ export class SimklApiError extends Error {
 function baseHeaders(): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    "simkl-api-key": SIMKL_CLIENT_ID,
+    "simkl-api-key": getSimklClientId().clientId,
   };
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useTrakt } from "./provider";
-import { TRAKT_API_BASE, TRAKT_API_VERSION, TRAKT_CLIENT_ID } from "./config";
+import { TRAKT_API_BASE, TRAKT_API_VERSION } from "./config";
+import { getTraktKeys } from "./keys";
 import { getSession } from "./session";
 import { getPlaybackPosition } from "@/lib/player/playback-clock";
 import { useSettings } from "@/lib/settings";
@@ -173,7 +174,7 @@ function sendBeacon(
         "Content-Type": "application/json",
         Authorization: `Bearer ${session.accessToken}`,
         "trakt-api-version": TRAKT_API_VERSION,
-        "trakt-api-key": TRAKT_CLIENT_ID,
+        "trakt-api-key": getTraktKeys().clientId,
       },
       body: JSON.stringify(body),
     });

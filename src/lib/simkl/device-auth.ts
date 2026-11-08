@@ -1,12 +1,23 @@
-import { SIMKL_API_BASE, SIMKL_CLIENT_ID } from "./config";
+import { SIMKL_API_BASE } from "./config";
+import { getSimklClientId } from "./keys";
 import { setSession } from "./session";
 import type { SimklPin, SimklSession } from "./types";
 
+/** Shown (translated) when Simkl refuses the user's own Client ID. */
+export const CUSTOM_KEYS_REFUSED =
+  "Simkl didn't accept your Client ID. Check it in Settings → Simkl, or switch back to Harbor's keys.";
+
 export async function requestPin(): Promise<SimklPin> {
+  const keys = getSimklClientId();
   const res = await fetch(
-    `${SIMKL_API_BASE}/oauth/pin?client_id=${encodeURIComponent(SIMKL_CLIENT_ID)}`,
+    `${SIMKL_API_BASE}/oauth/pin?client_id=${encodeURIComponent(keys.clientId)}`,
   );
-  if (!res.ok) throw new Error(`Simkl pin request failed: HTTP ${res.status}`);
+  if (!res.ok) {
+    if (keys.custom && res.status >= 400 && res.status < 500 && res.status !== 429) {
+      throw new Error(CUSTOM_KEYS_REFUSED);
+    }
+    throw new Error(`Simkl pin request failed: HTTP ${res.status}`);
+  }
   const data = (await res.json()) as {
     user_code: string;
     verification_url: string;
@@ -31,7 +42,7 @@ export type PollHandle = { cancel: () => void };
 async function pollOnce(userCode: string): Promise<SimklSession | null> {
   try {
     const res = await fetch(
-      `${SIMKL_API_BASE}/oauth/pin/${userCode}?client_id=${encodeURIComponent(SIMKL_CLIENT_ID)}`,
+      `${SIMKL_API_BASE}/oauth/pin/${userCode}?client_id=${encodeURIComponent(getSimklClientId().clientId)}`,
     );
     if (!res.ok) return null;
     const data = (await res.json()) as { result?: string; access_token?: string };
@@ -75,7 +86,7 @@ export async function fetchUsername(session: SimklSession): Promise<string | nul
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "simkl-api-key": SIMKL_CLIENT_ID,
+        "simkl-api-key": getSimklClientId().clientId,
         Authorization: `Bearer ${session.accessToken}`,
       },
     });
