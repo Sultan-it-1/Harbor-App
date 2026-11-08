@@ -181,6 +181,7 @@ export function SimklPanel() {
         saved={{ clientId: keyConfig.clientId }}
         inputs={[{ id: "clientId", label: t("Client ID"), required: true }]}
         connected={isConnected}
+        connectLabel={t("Connect Simkl")}
         onSave={(mode, v) => setSimklKeyConfig({ mode, clientId: v.clientId ?? "" })}
         help={
           <ol className="flex list-decimal flex-col gap-1.5 ps-5">

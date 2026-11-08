@@ -190,6 +190,7 @@ export function TraktPanel() {
           { id: "clientSecret", label: t("Client secret (optional)"), secret: true },
         ]}
         connected={isConnected}
+        connectLabel={t("Connect Trakt")}
         onSave={(mode, v) =>
           setTraktKeyConfig({ mode, clientId: v.clientId ?? "", clientSecret: v.clientSecret ?? "" })
         }

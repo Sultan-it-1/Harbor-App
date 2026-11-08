@@ -85,6 +85,7 @@ export function OwnKeysSection({
   inputs,
   help,
   connected,
+  connectLabel,
   onSave,
 }: {
   subtitle: string;
@@ -93,6 +94,8 @@ export function OwnKeysSection({
   inputs: KeyInput[];
   help: ReactNode;
   connected: boolean;
+  /** The sign-in button above (already translated), named in the "what now" line. */
+  connectLabel: string;
   onSave: (mode: Mode, values: Record<string, string>) => void;
 }) {
   const t = useT();
@@ -151,9 +154,10 @@ export function OwnKeysSection({
                   {t("Save keys")}
                 </button>
                 {active ? (
-                  <span className="flex items-center gap-1.5 text-[11.5px] font-medium text-accent">
-                    <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-                    {t("Your keys are in use.")}
+                  // Saved: what to do next, plainly (the sign-in button is up at the top).
+                  <span className="flex min-w-0 basis-full items-start gap-2 rounded-xl bg-accent/10 px-3 py-2.5 text-[13px] font-medium leading-snug text-ink">
+                    <Check size={16} strokeWidth={2.4} className="mt-0.5 shrink-0 text-accent" aria-hidden />
+                    {t("Saved. Now tap “{button}” above to sign in.", { button: connectLabel })}
                   </span>
                 ) : (
                   <span className="text-[11.5px] text-ink-subtle">

@@ -1835,6 +1835,7 @@ const settings: Record<string, string> = {
   "The download opens in your browser. When it's done, open it to install the new version over this one.":
     "يُفتح التنزيل في المتصفح. عند انتهائه افتحه لتثبيت الإصدار الجديد فوق هذا.",
   "Up to date": "محدَّث",
+  "Saved. Now tap “{button}” above to sign in.": "تم الحفظ. الآن اضغط «{button}» في الأعلى لتسجيل الدخول.",
 };
 
 export default settings;
