@@ -69,7 +69,13 @@ export function AppUpdateCard() {
         )}
       </div>
 
-      {u.status === "error" && u.error && <p className="text-[12px] text-danger">{u.error}</p>}
+      {u.status === "error" && (
+        <p className="text-[12px] leading-relaxed text-danger">
+          {u.busy
+            ? t("GitHub is limiting checks from your network right now. Try again in a little while.")
+            : t("Check your internet connection and try again.")}
+        </p>
+      )}
 
       {available && u.notes && (
         <div className="flex flex-col gap-1.5">

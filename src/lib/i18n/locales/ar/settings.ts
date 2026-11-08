@@ -1835,6 +1835,9 @@ const settings: Record<string, string> = {
   "The download opens in your browser. When it's done, open it to install the new version over this one.":
     "يُفتح التنزيل في المتصفح. عند انتهائه افتحه لتثبيت الإصدار الجديد فوق هذا.",
   "Up to date": "محدَّث",
+  "GitHub is limiting checks from your network right now. Try again in a little while.":
+    "GitHub يحدّ الطلبات من شبكتك حاليًا. حاول مرة أخرى بعد قليل.",
+  "Check your internet connection and try again.": "تحقّق من اتصالك بالإنترنت وحاول مرة أخرى.",
   "Saved. Now tap “{button}” above to sign in.": "تم الحفظ. الآن اضغط «{button}» في الأعلى لتسجيل الدخول.",
 };
 
