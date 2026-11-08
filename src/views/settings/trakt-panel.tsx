@@ -4,10 +4,12 @@ import { TraktDeviceModal } from "@/components/trakt/trakt-device-modal";
 import { useProfiles } from "@/lib/profiles";
 import { useSettings } from "@/lib/settings";
 import { fetchTraktAvatar } from "@/lib/trakt/profile";
+import { setTraktKeyConfig, TRAKT_CUSTOM_REDIRECT_URI, useTraktKeyConfig } from "@/lib/trakt/keys";
 import { useTrakt } from "@/lib/trakt/provider";
 import { openUrl } from "@/lib/window";
 import { useT } from "@/lib/i18n";
-import { Section, ToggleRow } from "./shared";
+import { CopyCode, OwnKeysSection } from "./own-keys-section";
+import { ExtLink, Section, ToggleRow } from "./shared";
 
 export function TraktPanel() {
   const t = useT();
@@ -17,6 +19,7 @@ export function TraktPanel() {
   const [modalOpen, setModalOpen] = useState(false);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [traktAvatar, setTraktAvatar] = useState<string | null>(null);
+  const keyConfig = useTraktKeyConfig();
 
   useEffect(() => {
     if (!isConnected) {
@@ -177,6 +180,40 @@ export function TraktPanel() {
           )}
         </Section>
       )}
+
+      <OwnKeysSection
+        subtitle={t("Sign in through Harbor's built-in Trakt app, or through an app you register on Trakt yourself so your sign-in doesn't depend on Harbor's keys.")}
+        mode={keyConfig.mode}
+        saved={{ clientId: keyConfig.clientId, clientSecret: keyConfig.clientSecret }}
+        inputs={[
+          { id: "clientId", label: t("Client ID"), required: true },
+          { id: "clientSecret", label: t("Client secret (optional)"), secret: true },
+        ]}
+        connected={isConnected}
+        onSave={(mode, v) =>
+          setTraktKeyConfig({ mode, clientId: v.clientId ?? "", clientSecret: v.clientSecret ?? "" })
+        }
+        help={
+          <>
+            <ol className="flex list-decimal flex-col gap-1.5 ps-5">
+              <li>
+                {t("Create an app at")}{" "}
+                <ExtLink href="https://trakt.tv/oauth/applications">trakt.tv/oauth/applications</ExtLink>
+              </li>
+              <li>
+                {t("Redirect URI:")} <CopyCode>{TRAKT_CUSTOM_REDIRECT_URI}</CopyCode>
+              </li>
+              <li>
+                {t("Allowed origins:")} <CopyCode>https://appassets.androidplatform.net</CopyCode>
+              </li>
+              <li>{t("Paste the Client ID below. Leave the secret empty if Trakt doesn't show one.")}</li>
+            </ol>
+            <p className="text-ink-subtle">
+              {t("A Development app on Trakt only lets in you and the members you add to it.")}
+            </p>
+          </>
+        }
+      />
 
       <Section
         title={t("Comments")}

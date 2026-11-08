@@ -156,7 +156,7 @@ export function TraktDeviceModal({ onClose }: { onClose: () => void }) {
         {connectState.kind === "error" && (
           <ErrorBox
             title={t("Couldn't reach Trakt")}
-            message={connectState.message}
+            message={t(connectState.message)}
             onRetry={beginConnect}
           />
         )}

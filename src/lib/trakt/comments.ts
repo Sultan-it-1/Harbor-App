@@ -1,5 +1,6 @@
 import { traktRequest } from "./client";
-import { TRAKT_API_BASE, TRAKT_CLIENT_ID } from "./config";
+import { TRAKT_API_BASE } from "./config";
+import { getTraktKeys } from "./keys";
 import { getSession } from "./session";
 import type { TraktTarget, TraktIds } from "./types";
 
@@ -196,7 +197,7 @@ export async function getUserRating(target: TraktTarget): Promise<number | null>
       headers: {
         "Content-Type": "application/json",
         "trakt-api-version": "2",
-        "trakt-api-key": TRAKT_CLIENT_ID,
+        "trakt-api-key": getTraktKeys().clientId,
         Authorization: `Bearer ${session.accessToken}`,
       },
       redirect: "manual",

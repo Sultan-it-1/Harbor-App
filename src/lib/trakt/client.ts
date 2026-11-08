@@ -1,9 +1,5 @@
-import {
-  TRAKT_API_BASE,
-  TRAKT_API_VERSION,
-  TRAKT_CLIENT_ID,
-  TRAKT_CLIENT_SECRET,
-} from "./config";
+import { TRAKT_API_BASE, TRAKT_API_VERSION } from "./config";
+import { getTraktKeys, secretField } from "./keys";
 import { androidFetch, isAndroidApp } from "@/lib/android";
 import { getSession, setSession } from "./session";
 import type { TraktSession } from "./types";
@@ -27,21 +23,22 @@ function baseHeaders(): HeadersInit {
   return {
     "Content-Type": "application/json",
     "trakt-api-version": TRAKT_API_VERSION,
-    "trakt-api-key": TRAKT_CLIENT_ID,
+    "trakt-api-key": getTraktKeys().clientId,
   };
 }
 
 async function refreshAccessToken(): Promise<TraktSession | null> {
   const current = getSession();
   if (!current) return null;
+  const keys = getTraktKeys();
   const res = await fetch(`${TRAKT_API_BASE}/oauth/token`, {
     method: "POST",
     headers: baseHeaders(),
     body: JSON.stringify({
       refresh_token: current.refreshToken,
-      client_id: TRAKT_CLIENT_ID,
-      client_secret: TRAKT_CLIENT_SECRET,
-      redirect_uri: "urn:ietf:wg:oauth:2.0:oob",
+      client_id: keys.clientId,
+      ...secretField(keys),
+      redirect_uri: keys.redirectUri,
       grant_type: "refresh_token",
     }),
   });

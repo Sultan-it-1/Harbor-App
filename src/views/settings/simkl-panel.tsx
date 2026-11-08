@@ -4,10 +4,12 @@ import { SimklDeviceModal } from "@/components/simkl/simkl-device-modal";
 import { useProfiles } from "@/lib/profiles";
 import { useSettings } from "@/lib/settings";
 import { fetchSimklAvatar } from "@/lib/simkl/profile";
+import { setSimklKeyConfig, useSimklKeyConfig } from "@/lib/simkl/keys";
 import { useSimkl } from "@/lib/simkl/provider";
 import { openUrl } from "@/lib/window";
 import { useT } from "@/lib/i18n";
-import { Section, ToggleRow } from "./shared";
+import { CopyCode, OwnKeysSection } from "./own-keys-section";
+import { ExtLink, Section, ToggleRow } from "./shared";
 
 export function SimklPanel() {
   const t = useT();
@@ -17,6 +19,7 @@ export function SimklPanel() {
   const [modalOpen, setModalOpen] = useState(false);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [simklAvatar, setSimklAvatar] = useState<string | null>(null);
+  const keyConfig = useSimklKeyConfig();
 
   useEffect(() => {
     if (!isConnected) {
@@ -171,6 +174,27 @@ export function SimklPanel() {
           )}
         </Section>
       )}
+
+      <OwnKeysSection
+        subtitle={t("Sign in through Harbor's built-in Simkl app, or through an app you register on Simkl yourself so your sign-in doesn't depend on Harbor's keys.")}
+        mode={keyConfig.mode}
+        saved={{ clientId: keyConfig.clientId }}
+        inputs={[{ id: "clientId", label: t("Client ID"), required: true }]}
+        connected={isConnected}
+        onSave={(mode, v) => setSimklKeyConfig({ mode, clientId: v.clientId ?? "" })}
+        help={
+          <ol className="flex list-decimal flex-col gap-1.5 ps-5">
+            <li>
+              {t("Create an app at")}{" "}
+              <ExtLink href="https://simkl.com/settings/developer/">simkl.com/settings/developer</ExtLink>
+            </li>
+            <li>
+              {t("Redirect URI:")} <CopyCode>urn:ietf:wg:oauth:2.0:oob</CopyCode>
+            </li>
+            <li>{t("Paste the Client ID below. Harbor signs in with a PIN, so the secret isn't needed.")}</li>
+          </ol>
+        }
+      />
 
       {modalOpen && <SimklDeviceModal onClose={() => setModalOpen(false)} />}
     </>

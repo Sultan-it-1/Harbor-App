@@ -144,7 +144,7 @@ export function SimklDeviceModal({ onClose }: { onClose: () => void }) {
         )}
 
         {connectState.kind === "error" && (
-          <ErrorBox title={t("Couldn't reach Simkl")} message={connectState.message} onRetry={beginConnect} />
+          <ErrorBox title={t("Couldn't reach Simkl")} message={t(connectState.message)} onRetry={beginConnect} />
         )}
       </div>
     </div>
