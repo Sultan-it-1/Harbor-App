@@ -8,6 +8,7 @@ import { resolveMeta } from "@/lib/meta-resource";
 import { libraryGetOne } from "@/lib/stremio";
 import { decodeWatchedEpisodes } from "@/lib/stremio-watched";
 import { fetchWatchedKeySet } from "@/lib/trakt/history";
+import { useTraktShowWatched } from "@/lib/trakt/use-show-watched";
 import { useTrakt } from "@/lib/trakt/provider";
 import type { PlayEpisode } from "@/lib/view";
 
@@ -21,7 +22,9 @@ export function usePlayerWatched(params: {
   const { isConnected: traktConnected } = useTrakt();
   const { isConnected: simklConnected } = useSimkl();
   useSyncExternalStore(subscribeManualWatched, manualWatchedVersion);
-  const [traktWatched, setTraktWatched] = useState<Set<string>>(() => new Set());
+  const [traktWatchedAll, setTraktWatched] = useState<Set<string>>(() => new Set());
+  // This show's every watched episode on Trakt, with the account-wide set.
+  const traktWatched = useTraktShowWatched(traktWatchedAll, enabled && traktConnected, meta.id, imdbId);
   const [simklWatched, setSimklWatched] = useState<Set<string>>(() => new Set());
   const [stremioWatched, setStremioWatched] = useState<Set<string>>(() => new Set());
 

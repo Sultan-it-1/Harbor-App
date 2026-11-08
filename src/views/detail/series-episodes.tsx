@@ -13,6 +13,7 @@ import { omdbSeasonRatings } from "@/lib/providers/omdb";
 import { useSettings } from "@/lib/settings";
 import { spoilerMaskFor } from "@/lib/spoilers";
 import { fetchWatchedKeySet } from "@/lib/trakt/history";
+import { useTraktShowWatched } from "@/lib/trakt/use-show-watched";
 import { useTrakt } from "@/lib/trakt/provider";
 import { loadSimklWatchedMap, simklWatchedForId } from "@/lib/simkl/list-status";
 import { markEpisodesWatched, unmarkEpisodeWatched } from "@/lib/simkl/history";
@@ -82,7 +83,7 @@ export function SeriesEpisodes({
   const [tvdbBySeason, setTvdbBySeason] = useState<Map<number, Map<number, TvdbEpisode>>>(new Map());
   const [omdbBySeason, setOmdbBySeason] = useState<Map<number, Map<number, number>>>(new Map());
   const [loading, setLoading] = useState(true);
-  const [traktWatched, setTraktWatched] = useState<Set<string>>(() => new Set());
+  const [traktWatchedAll, setTraktWatched] = useState<Set<string>>(() => new Set());
   const [simklWatched, setSimklWatched] = useState<Set<string>>(() => new Set());
   const cache = useRef<Map<number, Episode[]>>(new Map());
 
@@ -119,6 +120,8 @@ export function SeriesEpisodes({
   }, [simklConnected, imdbId, meta.id]);
 
   const traktKey = imdbId ?? meta.id;
+  // This show's every watched episode on Trakt, with the account-wide set.
+  const traktWatched = useTraktShowWatched(traktWatchedAll, traktConnected, meta.id, imdbId);
 
   // Season sizes tell how many episodes the show has (used when Cinemeta's list isn't there).
   useEffect(() => {
