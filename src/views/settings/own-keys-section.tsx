@@ -1,3 +1,4 @@
+import { Check, Copy } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useT } from "@/lib/i18n";
 import { Section, Segmented } from "./shared";
@@ -17,12 +18,58 @@ const MODE_OPTIONS = [
   { value: "custom", label: "My own keys" },
 ] as const;
 
-/** A value to copy into a form on another site: wraps on a phone instead of overflowing. */
-export function CopyCode({ children }: { children: ReactNode }) {
+/** Puts [text] on the clipboard; true when it got there. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // An older WebView without the clipboard API: the classic way.
+    try {
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      const ok = document.execCommand("copy");
+      area.remove();
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * A value to copy into a form on another site: a tap copies it (no typing it on a phone). Wraps
+ * on a phone instead of overflowing.
+ */
+export function CopyCode({ children }: { children: string }) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const id = window.setTimeout(() => setCopied(false), 1800);
+    return () => window.clearTimeout(id);
+  }, [copied]);
   return (
-    <code className="rounded bg-canvas/70 px-1.5 py-0.5 font-mono text-[12px] text-ink ring-1 ring-edge-soft [overflow-wrap:anywhere]">
-      {children}
-    </code>
+    <button
+      type="button"
+      onClick={() => void copyText(children).then((ok) => ok && setCopied(true))}
+      title={t("Copy to clipboard")}
+      aria-label={`${t("Copy to clipboard")}: ${children}`}
+      className="inline-flex max-w-full items-center gap-1.5 rounded bg-canvas/70 px-1.5 py-0.5 text-start font-mono text-[12px] text-ink ring-1 ring-edge-soft transition-colors hover:ring-edge active:bg-canvas"
+    >
+      <span className="[overflow-wrap:anywhere]">{children}</span>
+      {copied ? (
+        <Check size={12} strokeWidth={2.4} className="shrink-0 text-accent" aria-hidden />
+      ) : (
+        <Copy size={12} strokeWidth={2} className="shrink-0 text-ink-subtle" aria-hidden />
+      )}
+      {copied && <span className="shrink-0 font-sans text-[11px] text-accent">{t("Copied to clipboard")}</span>}
+    </button>
   );
 }
 

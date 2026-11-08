@@ -1,6 +1,10 @@
 export type SimklSession = {
   accessToken: string;
   username: string | null;
+  /** OAuth 2.0 apps (Simkl apps made since 2026): their tokens expire and are renewed with this. */
+  refreshToken?: string;
+  /** When the access token stops working (ms since 1970); none for the older PIN apps. */
+  expiresAt?: number;
 };
 
 export type SimklPin = {
@@ -9,6 +13,8 @@ export type SimklPin = {
   deepLinkUrl: string;
   expiresIn: number;
   pollIntervalSec: number;
+  /** Set for an OAuth 2.0 app: the device code its token is asked for with. */
+  deviceCode?: string;
 };
 
 export type SimklIds = {
