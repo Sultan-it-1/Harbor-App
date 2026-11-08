@@ -1834,6 +1834,7 @@ const settings: Record<string, string> = {
   "What's new": "ما الجديد",
   "The download opens in your browser. When it's done, open it to install the new version over this one.":
     "يُفتح التنزيل في المتصفح. عند انتهائه افتحه لتثبيت الإصدار الجديد فوق هذا.",
+  "Up to date": "محدَّث",
 };
 
 export default settings;

@@ -30,7 +30,7 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = (project.findProperty("harborVersionCode") as String?)?.toInt() ?: 1
-        versionName = (project.findProperty("harborVersionName") as String?) ?: "1.0.9"
+        versionName = (project.findProperty("harborVersionName") as String?) ?: "1.0.10"
         // Phones are ARM: the x86 copies of the FFmpeg decoder only served emulators (an x86
         // emulator or Chromebook with ARM translation still runs this build).
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }

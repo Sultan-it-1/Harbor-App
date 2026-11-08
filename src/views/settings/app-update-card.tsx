@@ -42,11 +42,13 @@ export function AppUpdateCard() {
           <p className="text-[14.5px] font-semibold text-ink">
             {available && u.latest ? t("Harbor {version} available", { version: u.latest }) : t("Updates")}
           </p>
-          <p className="text-[12.5px] text-ink-muted">
+          {/* One line whatever it says, so the card keeps its height while checking (the list
+              under it used to jump on every tap). */}
+          <p className="truncate text-[12.5px] text-ink-muted">
             {u.status === "checking"
               ? t("Checking…")
               : u.status === "uptodate"
-                ? `${t("You're on the latest version.")} (${u.current})`
+                ? `${t("Up to date")} · ${u.current}`
                 : u.status === "error"
                   ? t("Couldn't check for updates.")
                   : available
