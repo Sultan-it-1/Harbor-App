@@ -79,8 +79,20 @@ jobs:
             echo "::error::the HARBOR_KEYSTORE_BASE64 and HARBOR_KEYSTORE_PASSWORD secrets must both be set."
             exit 1
           fi
-          echo "$HARBOR_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/harbor-release.p12"
+          # Spaces or line breaks from pasting the secret don't matter.
+          printf '%s' "$HARBOR_KEYSTORE_BASE64" | tr -d ' \r\n\t' | base64 -d > "$RUNNER_TEMP/harbor-release.p12" || true
           export HARBOR_KEYSTORE_PATH="$RUNNER_TEMP/harbor-release.p12"
+          # Which secret is wrong, said plainly (nothing secret is printed): the key file must be
+          # the Harbor release key, and the password must open it.
+          KEY_SHA=$(sha256sum "$HARBOR_KEYSTORE_PATH" | cut -d' ' -f1)
+          if [ "$KEY_SHA" != "${{ vars.HARBOR_KEY_FILE_SHA256 || '46c398a315b18907be0b17384a36ec75031e1236e92091def84e0a511d859957' }}" ]; then
+            echo "::error::HARBOR_KEYSTORE_BASE64 isn't the Harbor key file (it decodes to $(stat -c %s "$HARBOR_KEYSTORE_PATH") bytes, sha256 $KEY_SHA). Paste the whole file's text again."
+            exit 1
+          fi
+          if ! keytool -list -keystore "$HARBOR_KEYSTORE_PATH" -storetype pkcs12 -storepass:env HARBOR_KEYSTORE_PASSWORD > /dev/null 2>&1; then
+            echo "::error::HARBOR_KEYSTORE_PASSWORD doesn't open the Harbor key (the key file itself is right). Set the password again, with no spaces or line break around it."
+            exit 1
+          fi
           # The version people see is package.json's ("1.0.0"); Android's own number comes from it
           # (1.0.0 -> 10000, 1.2.3 -> 10203), so a newer version always installs over an older one.
           VERSION=$(node -p "require('../package.json').version")
