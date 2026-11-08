@@ -1,6 +1,6 @@
 plugins {
+    // Kotlin comes with the Android plugin (AGP 9).
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
 }
 
 val media3 = "1.9.0"
@@ -67,7 +67,8 @@ android {
     }
 
     sourceSets["main"].apply {
-        assets.srcDir(webAssetsOut)
+        // A plain folder (AGP 9 takes no Provider here); copyWebAssets fills it before each build.
+        assets.srcDir(webAssetsOut.get().asFile)
         // Reuse the launcher icons that already live with the Tauri project.
         res.srcDir("src/main/res-launcher")
     }

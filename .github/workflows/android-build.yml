@@ -24,7 +24,9 @@ concurrency:
 jobs:
   apk:
     name: Android APK
-    runs-on: ubuntu-latest
+    # Ubuntu 26.04 by name: ubuntu-latest becomes it from 19 Oct 2026, so this is the same
+    # machine without the switch happening under a build.
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -99,7 +101,7 @@ jobs:
           # (1.0.0 -> 10000, 1.2.3 -> 10203), so a newer version always installs over an older one.
           VERSION=$(node -p "require('../package.json').version")
           CODE=$(node -p "const [a,b,c]=require('../package.json').version.split('.').map(Number); a*10000+b*100+c")
-          ./gradlew testReleaseUnitTest assembleRelease --no-daemon \
+          ./gradlew testDebugUnitTest assembleRelease --no-daemon \
             -PharborVersionName="$VERSION" \
             -PharborVersionCode="$CODE"
           # Fixed file name so .../releases/latest/download/harbor-android.apk always works.
