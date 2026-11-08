@@ -1,0 +1,145 @@
+import { useSettings } from "@/lib/settings";
+import { PlayModePanel, PlayerEnginePanel } from "./player-panel";
+import { Section, Segmented, ToggleRow, useSettingsActiveContext } from "./shared";
+import { CROP_PRESETS } from "@/views/player/hooks/use-video-fill";
+import { useT } from "@/lib/i18n";
+import { isPhoneLayout } from "@/lib/platform";
+
+// Android app: the native player has its own engine, picture and audio handling; the mpv/HTML5
+// engine choice, mpv aspect presets and the mpv audio EQ have no effect there.
+const PHONE = isPhoneLayout();
+
+export function QualityPanel() {
+  const t = useT();
+  const { settings, update } = useSettings();
+  const { setActive } = useSettingsActiveContext();
+  return (
+    <>
+      <Section
+        title={t("Play button behavior")}
+        subtitle={t("Choose what happens when you hit Play on a title. Manual gives you full control over quality and source.")}
+      >
+        <PlayModePanel />
+      </Section>
+
+      {!PHONE && (
+      <Section
+        title={t("Player engine")}
+        subtitle={t("HTML5 plays everything WebView2 supports. mpv handles TrueHD, DTS-HD, AV1, weird containers, and HDR. Auto picks based on the source.")}
+      >
+        <PlayerEnginePanel />
+      </Section>
+      )}
+
+      <Section
+        title={t("Stream quality in player")}
+        subtitle={t("Show what you're actually watching, under the title in the player.")}
+      >
+        <ToggleRow
+          label={t("Show stream quality under the title")}
+          sub={t("Displays the resolution, HDR format and audio (e.g. 4K · Dolby Vision · TrueHD 7.1) under the movie or episode title while playing. Off by default.")}
+          value={settings.showQualityInfo}
+          onChange={(v) => update({ showQualityInfo: v })}
+        />
+      </Section>
+
+      {!PHONE && (
+      <Section
+        title={t("Aspect ratio")}
+        subtitle={t("Default picture shape on the mpv engine. Fit keeps the source as-is with any black bars; the rest stretch or crop to fill, handy for old 4:3 shows on a widescreen TV.")}
+      >
+        <Segmented
+          value={settings.cropMode}
+          options={CROP_PRESETS.map((m) => ({ value: m.id, label: m.label }))}
+          onChange={(v) => update({ cropMode: v })}
+        />
+        <p className="text-[12.5px] leading-relaxed text-ink-subtle">
+          {t("Want to change the ratio mid-playback? The live aspect button is hidden by default to keep the player tidy.")}{" "}
+          <button
+            type="button"
+            onClick={() => setActive("playerLayout")}
+            className="font-semibold text-ink underline-offset-4 transition-colors hover:underline"
+          >
+            {t("Turn it on in Player layout")}
+          </button>
+        </p>
+      </Section>
+      )}
+
+      {!PHONE && (
+      <Section
+        title={t("Audio")}
+        subtitle={t("Shape the sound without touching your system EQ. Applies on the mpv engine; the HTML5 engine plays audio untouched.")}
+      >
+        <ToggleRow
+          label={t("Normalize loudness")}
+          sub={t("Evens out quiet dialogue and loud action scenes with a dynamic normalizer.")}
+          value={settings.audioNormalize}
+          onChange={(v) => update({ audioNormalize: v })}
+        />
+        <div>
+          <Segmented
+            value={settings.audioProfile}
+            options={[
+              { value: "off", label: "Flat" },
+              { value: "bass", label: "Bass boost" },
+              { value: "voice", label: "Vocal clarity" },
+              { value: "bass-reduce", label: "Less bass" },
+              { value: "night", label: "Night mode" },
+            ]}
+            onChange={(v) => update({ audioProfile: v })}
+          />
+          <p className="mt-2.5 text-[12.5px] leading-relaxed text-ink-subtle">
+            {t("Night mode gently compresses loud moments for late-night watching. Profiles take effect when the next track loads and stack with the normalizer.")}
+          </p>
+        </div>
+      </Section>
+      )}
+
+      <Section
+        title={t("Skip intros")}
+        subtitle={t("Harbor finds intro and credits timing from AniSkip, TheIntroDB, and the file's own chapters, then shows a Skip button at the right moment.")}
+      >
+        <ToggleRow
+          label={t("Auto-skip intros")}
+          sub={t("Jump past openings automatically the moment one starts. The Skip button still shows either way, and seeking back into an intro replays it without skipping again.")}
+          value={settings.autoSkipIntro}
+          onChange={(v) => update({ autoSkipIntro: v })}
+        />
+      </Section>
+
+      <Section
+        title={t("Next episode prompt")}
+        subtitle={t("When the Up Next pill appears before an episode ends. Auto scales to the episode length, so short episodes stop prompting so early. Off hides it.")}
+      >
+        <Segmented
+          value={nextEpLeadKey(settings.nextEpisodeLeadSec)}
+          options={NEXT_EP_LEADS.map((o) => ({ value: o.value, label: o.label }))}
+          onChange={(v) =>
+            update({ nextEpisodeLeadSec: NEXT_EP_LEADS.find((o) => o.value === v)?.sec ?? -1 })
+          }
+        />
+        <ToggleRow
+          label={t("Auto-play next episode")}
+          sub={t("When an episode ends, automatically start the next one. Off lets the episode finish and stop.")}
+          value={settings.autoPlayNextEpisode}
+          onChange={(v) => update({ autoPlayNextEpisode: v })}
+        />
+      </Section>
+    </>
+  );
+}
+
+const NEXT_EP_LEADS = [
+  { value: "auto", label: "Auto", sec: -1 },
+  { value: "off", label: "Off", sec: 0 },
+  { value: "30", label: "30s", sec: 30 },
+  { value: "45", label: "45s", sec: 45 },
+  { value: "60", label: "1 min", sec: 60 },
+  { value: "90", label: "1.5 min", sec: 90 },
+  { value: "120", label: "2 min", sec: 120 },
+] as const;
+
+function nextEpLeadKey(sec: number): string {
+  return NEXT_EP_LEADS.find((o) => o.sec === sec)?.value ?? "auto";
+}

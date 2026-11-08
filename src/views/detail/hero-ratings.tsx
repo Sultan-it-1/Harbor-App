@@ -1,0 +1,201 @@
+import { Popcorn } from "lucide-react";
+import type { ReactNode } from "react";
+import { ImdbIcon } from "@/components/icons/imdb-icon";
+import { MalLogo } from "@/components/icons/mal-logo";
+import { RtBadge } from "@/components/rt-badge";
+import { HoverTooltip } from "@/components/hover-tooltip";
+import { useT } from "@/lib/i18n";
+import type { OmdbScores } from "@/lib/providers/omdb";
+import type { MdblistScores } from "@/lib/providers/mdblist";
+import mdblistLogo from "@/assets/addon-logos/mdblist.png";
+import letterboxdLogo from "@/assets/addon-logos/letterboxd.png";
+import traktLogo from "@/assets/trakt.svg";
+
+function ScoreItem({
+  label,
+  sublabel,
+  onClick,
+  children,
+}: {
+  label: string;
+  sublabel?: string;
+  onClick?: () => void;
+  children: ReactNode;
+}) {
+  const inner = (
+    <span className="flex items-center gap-1.5 px-2.5 py-1 text-[13px] font-semibold text-ink">
+      {children}
+    </span>
+  );
+  return (
+    <HoverTooltip label={label} sublabel={sublabel} side="top" align="center">
+      {onClick ? (
+        <button
+          type="button"
+          onClick={onClick}
+          className="flex items-center rounded-full transition-colors hover:bg-canvas/90"
+        >
+          {inner}
+        </button>
+      ) : (
+        inner
+      )}
+    </HoverTooltip>
+  );
+}
+
+function Divider() {
+  return <span className="h-3.5 w-px bg-edge-soft/60" aria-hidden />;
+}
+
+function metacriticBand(value: number): string {
+  if (value >= 61) return "bg-emerald-500";
+  if (value >= 40) return "bg-amber-500";
+  return "bg-red-500";
+}
+
+export function HeroRatings({
+  rating,
+  isAnime,
+  scores,
+  mdblist,
+  showRtBadge,
+  imdbId,
+  mediaType,
+  onOpenUrl,
+  ratingSource = "imdb",
+}: {
+  rating?: string;
+  isAnime: boolean;
+  scores: OmdbScores | null;
+  mdblist: MdblistScores | null;
+  showRtBadge: boolean;
+  imdbId: string | null;
+  mediaType: "movie" | "show";
+  onOpenUrl: (url: string) => void;
+  ratingSource?: "imdb" | "tmdb";
+}) {
+  const t = useT();
+  const metacritic = mdblist?.metacritic ?? scores?.metascore ?? null;
+
+  const items: ReactNode[] = [];
+
+  if (rating) {
+    items.push(
+      <ScoreItem
+        key="imdb"
+        label={isAnime ? t("MyAnimeList") : ratingSource === "tmdb" ? t("TMDB") : t("IMDb")}
+        sublabel={isAnime ? t("Score /10") : t("Rating /10")}
+        onClick={
+          !isAnime && ratingSource !== "tmdb" && imdbId
+            ? () => onOpenUrl(`https://www.imdb.com/title/${imdbId}/`)
+            : undefined
+        }
+      >
+        {isAnime ? (
+          <MalLogo className="h-[14px] w-auto text-ink-muted" />
+        ) : ratingSource === "tmdb" ? (
+          <span className="text-[10px] font-bold tracking-tight text-ink-muted">TMDB</span>
+        ) : (
+          <ImdbIcon className="h-[15px] w-auto rounded-[3px]" />
+        )}
+        <span>{rating}</span>
+      </ScoreItem>,
+    );
+  }
+
+  if (showRtBadge && scores?.rtCritics != null) {
+    items.push(
+      <ScoreItem key="rt-critics" label={t("Rotten Tomatoes Critics")} sublabel={t("Tomatometer")}>
+        <RtBadge score={scores.rtCritics} className="h-[16px] w-auto" />
+        <span>{scores.rtCritics}%</span>
+      </ScoreItem>,
+    );
+  }
+
+  if (showRtBadge && mdblist?.rtAudience != null) {
+    items.push(
+      <ScoreItem key="rt-audience" label={t("Rotten Tomatoes Audience")} sublabel={t("Popcornmeter")}>
+        <Popcorn
+          size={15}
+          strokeWidth={2}
+          className={mdblist.rtAudience >= 60 ? "text-accent" : "text-ink-subtle"}
+        />
+        <span>{Math.round(mdblist.rtAudience)}%</span>
+      </ScoreItem>,
+    );
+  }
+
+  if (mdblist?.letterboxd != null) {
+    items.push(
+      <ScoreItem
+        key="letterboxd"
+        label={t("Letterboxd")}
+        sublabel={t("Average /5")}
+        onClick={imdbId ? () => onOpenUrl(`https://letterboxd.com/imdb/${imdbId}/`) : undefined}
+      >
+        <img
+          src={letterboxdLogo}
+          alt=""
+          className="h-[14px] w-[14px] rounded-[3px] object-cover"
+        />
+        <span>{mdblist.letterboxd.toFixed(1)}</span>
+      </ScoreItem>,
+    );
+  }
+
+  if (metacritic != null) {
+    items.push(
+      <ScoreItem key="metacritic" label={t("Metacritic")} sublabel={t("Metascore")}>
+        <span
+          className={`flex h-[18px] min-w-[22px] items-center justify-center rounded-[4px] px-1 text-[11px] font-bold text-white ${metacriticBand(metacritic)}`}
+        >
+          {metacritic}
+        </span>
+      </ScoreItem>,
+    );
+  }
+
+  if (mdblist?.trakt != null) {
+    items.push(
+      <ScoreItem
+        key="trakt"
+        label={t("Trakt")}
+        onClick={imdbId ? () => onOpenUrl(`https://trakt.tv/search/imdb/${imdbId}`) : undefined}
+      >
+        <img src={traktLogo} alt="" className="h-[14px] w-[14px] object-contain" />
+        <span>{Math.round(mdblist.trakt)}%</span>
+      </ScoreItem>,
+    );
+  }
+
+  if (mdblist?.score != null) {
+    items.push(
+      <ScoreItem
+        key="mdblist"
+        label={t("MDBList")}
+        onClick={imdbId ? () => onOpenUrl(`https://mdblist.com/${mediaType}/${imdbId}`) : undefined}
+      >
+        <img
+          src={mdblistLogo}
+          alt=""
+          className="h-[14px] w-[14px] rounded-[3px] object-contain"
+        />
+        <span>{Math.round(mdblist.score)}</span>
+      </ScoreItem>,
+    );
+  }
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="inline-flex items-center rounded-full border border-edge-soft bg-canvas/70 px-1 py-0.5">
+      {items.map((item, i) => (
+        <span key={i} className="flex items-center">
+          {i > 0 && <Divider />}
+          {item}
+        </span>
+      ))}
+    </div>
+  );
+}

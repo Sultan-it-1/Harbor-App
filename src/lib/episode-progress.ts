@@ -1,0 +1,119 @@
+import { manualWatchedState } from "@/lib/manual-watched";
+import { lastPlayedEpisode, readResumeEntry } from "@/lib/resume";
+
+export type EpisodeProgress = {
+  ratio: number;
+  watched: boolean;
+  startedAt: number;
+};
+
+const WATCHED_THRESHOLD = 0.85;
+const SEASON_MOSTLY_WATCHED = 0.75;
+
+export function resumeDefaultSeason(
+  seriesId: string,
+  seasons: { seasonNumber: number; episodeCount: number }[],
+  stremioWatched?: Set<string>,
+): number {
+  const real = seasons
+    .filter((s) => s.seasonNumber >= 1)
+    .sort((a, b) => a.seasonNumber - b.seasonNumber);
+  const first = real[0]?.seasonNumber ?? seasons[0]?.seasonNumber ?? 1;
+  if (real.length <= 1) return first;
+
+  const watchedInSeason = (sn: number): number => {
+    if (!stremioWatched || stremioWatched.size === 0) return 0;
+    let n = 0;
+    const prefix = `${sn}:`;
+    for (const k of stremioWatched) if (k.startsWith(prefix)) n += 1;
+    return n;
+  };
+
+  const last = lastPlayedEpisode(seriesId);
+  let candidate = first;
+  for (const s of real) {
+    const started =
+      watchedInSeason(s.seasonNumber) >= 1 || (last != null && last.season === s.seasonNumber);
+    if (started && s.seasonNumber > candidate) candidate = s.seasonNumber;
+  }
+  if (candidate === first) return first;
+
+  for (const s of real) {
+    if (s.seasonNumber >= candidate) continue;
+    const total = s.episodeCount;
+    if (!total || total <= 0) return first;
+    if (watchedInSeason(s.seasonNumber) / total < SEASON_MOSTLY_WATCHED) return first;
+  }
+  return candidate;
+}
+
+/** A show's key in Trakt's watched set: "imdb:tt…" or "tmdb:123" (from "tmdb:tv:123"). */
+function traktShowKey(id: string | null | undefined): string | null {
+  if (!id) return null;
+  if (/^tt\d+$/.test(id)) return `imdb:${id}`;
+  const tmdb = id.match(/^tmdb:(?:tv:)?(\d+)$/);
+  return tmdb ? `tmdb:${tmdb[1]}` : null;
+}
+
+export function getEpisodeProgress(
+  resumeId: string,
+  season: number,
+  episode: number,
+  runtimeMin: number | null,
+  traktImdbId: string | null,
+  traktWatched: Set<string>,
+  stremioWatched?: Set<string>,
+  simklWatched?: Set<string>,
+  traktSeason?: number,
+  traktEpisode?: number,
+  /** The show's other id ("tmdb:tv:123", "tt…"), also looked for in [traktWatched]. */
+  traktAltId?: string | null,
+): EpisodeProgress {
+  const entry = readResumeEntry(resumeId, season, episode);
+  const startedAt = entry?.t ?? 0;
+
+  const manual = manualWatchedState(resumeId, season, episode);
+  if (manual === false) return { ratio: 0, watched: false, startedAt };
+
+  const ms = entry?.ms ?? 0;
+  const durationMs = runtimeMin && runtimeMin > 0 ? runtimeMin * 60 * 1000 : 0;
+  const ratio = durationMs > 0 && ms > 0 ? Math.min(1, ms / durationMs) : 0;
+
+  const se = `${traktSeason ?? season}:${traktEpisode ?? episode}`;
+  const traktDone = [traktImdbId, traktAltId].some((id) => {
+    const key = traktShowKey(id);
+    return key != null && traktWatched.has(`${key}:${se}`);
+  });
+  const stremioDone = stremioWatched ? stremioWatched.has(`${season}:${episode}`) : false;
+  const simklDone = simklWatched ? simklWatched.has(`${season}:${episode}`) : false;
+  const done = manual === true || traktDone || stremioDone || simklDone;
+
+  return {
+    ratio: done ? 1 : ratio,
+    watched: done || ratio >= WATCHED_THRESHOLD,
+    startedAt,
+  };
+}
+
+export function formatRelativeWatched(ts: number): string {
+  if (!ts) return "";
+  const now = Date.now();
+  const diffMs = Math.max(0, now - ts);
+  const sec = Math.floor(diffMs / 1000);
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return `${hour}h ago`;
+  const day = Math.floor(hour / 24);
+  if (day === 1) return "yesterday";
+  if (day < 7) return `${day} days ago`;
+  if (day < 14) return "last week";
+  if (day < 30) return `${Math.floor(day / 7)} weeks ago`;
+  if (day < 365) {
+    const month = Math.floor(day / 30);
+    return month === 1 ? "last month" : `${month} months ago`;
+  }
+  const year = Math.floor(day / 365);
+  return year === 1 ? "last year" : `${year} years ago`;
+}

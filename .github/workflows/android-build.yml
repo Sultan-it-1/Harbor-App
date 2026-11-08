@@ -1,0 +1,154 @@
+name: android-build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "android/**"
+      - "src/**"
+      - "public/**"
+      - "index.html"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/android-build.yml"
+
+permissions:
+  contents: write
+
+# One build per branch at a time: a newer push replaces one still running, so two builds of the
+# same branch can't race to publish.
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install JS deps
+        run: |
+          # mpegts.js pulls a dependency straight from GitHub; never try SSH for it.
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
+          pnpm install --frozen-lockfile
+
+      - name: Check Arabic translations
+        run: pnpm run check:i18n
+
+      - name: Build web UI
+        run: pnpm run build
+
+      - name: Phone smoke test
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          pnpm run test:phone
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build APK
+        working-directory: android
+        env:
+          # The release key: the .p12 as base64 and its password, both repository secrets.
+          HARBOR_KEYSTORE_BASE64: ${{ secrets.HARBOR_KEYSTORE_BASE64 }}
+          HARBOR_KEYSTORE_PASSWORD: ${{ secrets.HARBOR_KEYSTORE_PASSWORD }}
+        run: |
+          # A debug-signed APK can't update the installed app (Android refuses another key), so
+          # without the release key nothing is built or published.
+          if [ -z "$HARBOR_KEYSTORE_BASE64" ] || [ -z "$HARBOR_KEYSTORE_PASSWORD" ]; then
+            echo "::error::the HARBOR_KEYSTORE_BASE64 and HARBOR_KEYSTORE_PASSWORD secrets must both be set."
+            exit 1
+          fi
+          echo "$HARBOR_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/harbor-release.p12"
+          export HARBOR_KEYSTORE_PATH="$RUNNER_TEMP/harbor-release.p12"
+          # The version people see is package.json's ("1.0.0"); Android's own number comes from it
+          # (1.0.0 -> 10000, 1.2.3 -> 10203), so a newer version always installs over an older one.
+          VERSION=$(node -p "require('../package.json').version")
+          CODE=$(node -p "const [a,b,c]=require('../package.json').version.split('.').map(Number); a*10000+b*100+c")
+          ./gradlew testReleaseUnitTest assembleRelease --no-daemon \
+            -PharborVersionName="$VERSION" \
+            -PharborVersionCode="$CODE"
+          # Fixed file name so .../releases/latest/download/harbor-android.apk always works.
+          mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/harbor-android.apk
+          echo "HARBOR_VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Verify APK
+        env:
+          # SHA-256 of the Harbor release certificate (alias "harbor"): every APK is signed with the
+          # same key. After a key change, set the repository variable HARBOR_CERT_SHA256.
+          EXPECTED_CERT: ${{ vars.HARBOR_CERT_SHA256 || '188b66718e6f00d5f0b382f9f2cd86b53250bd59a557a8a9ac4f17258903c620' }}
+        run: |
+          APK=android/app/build/outputs/apk/release/harbor-android.apk
+          SIZE=$(stat -c %s "$APK")
+          echo "APK: $SIZE bytes"
+          if [ "$SIZE" -lt 5000000 ] || [ "$SIZE" -gt 200000000 ]; then
+            echo "::error::unexpected APK size ($SIZE bytes)"
+            exit 1
+          fi
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          [ -x "$APKSIGNER" ] || APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          CERT=$("$APKSIGNER" verify --print-certs "$APK" | grep -m1 'certificate SHA-256 digest' | awk '{print $NF}')
+          if [ "$CERT" != "$EXPECTED_CERT" ]; then
+            echo "::error::the APK is not signed with the Harbor release key (certificate $CERT)"
+            exit 1
+          fi
+          echo "HARBOR_APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
+      # One release a version: pushing without changing package.json's version only builds (the
+      # APK is kept with the run below); a new version on main is published as v<version>.
+      - name: Is this version new?
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v$HARBOR_VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "v$HARBOR_VERSION is already released: nothing published (raise the version to release)."
+            echo "HARBOR_PUBLISH=false" >> "$GITHUB_ENV"
+          else
+            echo "HARBOR_PUBLISH=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Publish release
+        if: github.ref == 'refs/heads/main' && env.HARBOR_PUBLISH == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.HARBOR_VERSION }}
+          name: Harbor ${{ env.HARBOR_VERSION }}
+          target_commitish: ${{ github.sha }}
+          make_latest: "true"
+          body: |
+            Download **harbor-android.apk** below, open it on your phone and allow
+            "install from unknown sources" when Android asks.
+
+            SHA-256: `${{ env.HARBOR_APK_SHA256 }}`
+          files: android/app/build/outputs/apk/release/harbor-android.apk
+
+      # A copy next to the run (the only copy of a build that isn't a new version). A full artifact
+      # quota must not fail the build, and the copy only stays 3 days.
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: harbor-android-apk
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 3

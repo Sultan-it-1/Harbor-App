@@ -1,0 +1,54 @@
+{
+  "name": "harbor-app",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "test:phone": "node tests/phone-smoke.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-deep-link": "^2.4.9",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-fs": "^2.5.1",
+    "@tauri-apps/plugin-http": "^2.5.8",
+    "@tauri-apps/plugin-opener": "^2.5.3",
+    "@tauri-apps/plugin-process": "^2",
+    "@tauri-apps/plugin-updater": "^2",
+    "express": "^4.21.2",
+    "gifenc": "^1.0.3",
+    "hls.js": "^1.6.16",
+    "lottie-web": "^5.13.0",
+    "lucide-react": "^0.460.0",
+    "mpegts.js": "^1.8.0",
+    "parse-torrent-title": "^3.0.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "rehype-raw": "^7.0.0",
+    "remark-gfm": "^4.0.1",
+    "tailwindcss": "^4"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@tailwindcss/vite": "^4",
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "cheerio": "^1.2.0",
+    "playwright": "1.63.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

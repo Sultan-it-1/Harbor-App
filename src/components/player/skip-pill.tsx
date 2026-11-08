@@ -1,0 +1,188 @@
+import { ChevronsRight, FastForward, Play, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import type { SkipSegment } from "@/lib/skip-intro";
+import type { SpoilerMask } from "@/lib/spoilers";
+import type { PlayEpisode } from "@/lib/view";
+import { useT } from "@/lib/i18n";
+
+const UP_NEXT_WINDOW_SEC = 15;
+
+export function SkipPill({
+  segment,
+  hasNextEp,
+  nextEp,
+  nextEpMask,
+  remainingSec,
+  visible,
+  onSkip,
+  onNextEpisode,
+  onCancelAutoNext,
+}: {
+  segment: SkipSegment | null;
+  hasNextEp: boolean;
+  nextEp: PlayEpisode | null;
+  nextEpMask?: SpoilerMask;
+  remainingSec: number;
+  visible: boolean;
+  onSkip: () => void;
+  onNextEpisode: () => void;
+  onCancelAutoNext?: () => void;
+}) {
+  const t = useT();
+  const [mounted, setMounted] = useState<SkipSegment | null>(segment);
+  const [show, setShow] = useState(false);
+
+  useEffect(() => {
+    if (segment) {
+      setMounted(segment);
+      const id = window.requestAnimationFrame(() => setShow(true));
+      return () => window.cancelAnimationFrame(id);
+    }
+    setShow(false);
+    const timer = window.setTimeout(() => setMounted(null), 240);
+    return () => window.clearTimeout(timer);
+  }, [segment?.kind, segment?.startSec, segment?.endSec]);
+
+  if (!mounted) return null;
+
+  const isOutroNext = mounted.kind === "outro" && hasNextEp && !!nextEp;
+  const inCountdownWindow =
+    isOutroNext && remainingSec > 0 && remainingSec <= UP_NEXT_WINDOW_SEC;
+
+  if (isOutroNext && inCountdownWindow && nextEp) {
+    return (
+      <UpNextCard
+        ep={nextEp}
+        mask={nextEpMask}
+        remainingSec={remainingSec}
+        visible={visible && show}
+        onPlay={onNextEpisode}
+        onCancel={onCancelAutoNext}
+      />
+    );
+  }
+
+  const label =
+    mounted.kind === "intro"
+      ? t("Skip Intro")
+      : mounted.kind === "recap"
+        ? t("Skip Recap")
+        : isOutroNext
+          ? t("Next Episode")
+          : t("Skip Credits");
+  const action = isOutroNext ? onNextEpisode : onSkip;
+  const Icon = isOutroNext ? ChevronsRight : FastForward;
+
+  return (
+    <div
+      className={`pointer-events-none absolute end-7 z-30 transition-all duration-200 ease-out ${
+        visible && show
+          ? "bottom-44 opacity-100 translate-y-0"
+          : "bottom-40 opacity-0 translate-y-2"
+      }`}
+    >
+      <button
+        type="button"
+        onClick={action}
+        className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-white/20 bg-black/75 px-5 py-2.5 text-[14px] font-semibold text-white shadow-[0_18px_50px_-15px_rgba(0,0,0,0.85)] backdrop-blur-md transition-[background-color,transform] hover:bg-black/90 active:scale-[0.97]"
+      >
+        <Icon size={18} strokeWidth={2.2} />
+        {label}
+      </button>
+    </div>
+  );
+}
+
+function UpNextCard({
+  ep,
+  mask,
+  remainingSec,
+  visible,
+  onPlay,
+  onCancel,
+}: {
+  ep: PlayEpisode;
+  mask?: SpoilerMask;
+  remainingSec: number;
+  visible: boolean;
+  onPlay: () => void;
+  onCancel?: () => void;
+}) {
+  const t = useT();
+  const seconds = Math.max(0, Math.ceil(remainingSec));
+  const progress = Math.min(1, Math.max(0, 1 - seconds / UP_NEXT_WINDOW_SEC));
+  const epLabel =
+    typeof ep.season === "number" && typeof ep.episode === "number"
+      ? `S${ep.imdbSeason ?? ep.season} · E${ep.imdbEpisode ?? ep.episode}`
+      : t("Up Next");
+  const title = mask?.title ? epLabel : ep.name?.trim() || epLabel;
+  const hideStill = mask?.thumb === true;
+
+  return (
+    <div
+      className={`pointer-events-none absolute end-7 z-30 transition-all duration-200 ease-out ${
+        visible
+          ? "bottom-44 opacity-100 translate-y-0"
+          : "bottom-40 opacity-0 translate-y-2"
+      }`}
+    >
+      <div className="pointer-events-auto relative flex w-[360px] overflow-hidden rounded-2xl border border-white/15 bg-black/80 shadow-[0_24px_60px_-15px_rgba(0,0,0,0.9)] backdrop-blur-md">
+        <div className="relative aspect-[16/10] w-[148px] shrink-0 overflow-hidden bg-white/5">
+          {ep.still && !hideStill ? (
+            <img
+              src={ep.still}
+              alt=""
+              draggable={false}
+              loading="lazy"
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <div className="grid h-full place-items-center text-[11px] uppercase tracking-[0.18em] text-white/45">
+              {epLabel}
+            </div>
+          )}
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-black/60" />
+        </div>
+        <div className="flex flex-1 flex-col gap-1.5 px-4 py-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-white/55">
+                {t("Up next in {s}s", { s: seconds })}
+              </div>
+              <div className="mt-0.5 truncate text-[13.5px] font-semibold text-white">
+                {title}
+              </div>
+              {title !== epLabel && (
+                <div className="truncate text-[11.5px] text-white/55">{epLabel}</div>
+              )}
+            </div>
+            {onCancel && (
+              <button
+                type="button"
+                onClick={onCancel}
+                aria-label={t("Cancel autoplay")}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                <X size={13} strokeWidth={2.2} />
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onPlay}
+            className="mt-auto inline-flex h-9 items-center justify-center gap-1.5 self-start rounded-full bg-white px-4 text-[12.5px] font-semibold text-black transition-opacity hover:opacity-90"
+          >
+            <Play size={12} strokeWidth={2.4} className="fill-current" />
+            {t("Play now")}
+          </button>
+        </div>
+        <div className="absolute inset-x-0 bottom-0 h-[3px] bg-white/15">
+          <div
+            className="h-full bg-white transition-[width] duration-200 ease-linear"
+            style={{ width: `${progress * 100}%` }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}

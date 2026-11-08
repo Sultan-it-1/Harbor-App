@@ -1,0 +1,313 @@
+import { androidApi, onNativePlayerEvent } from "@/lib/android";
+import { emptySnapshot, type PlayerBridge, type PlayerSnapshot } from "../bridge";
+import { uiLocale } from "@/lib/i18n/locale";
+
+const MAX_INITIAL_SUBS = 20;
+const SUB_BATCH_MS = 700;
+
+// One native player is shared by every bridge instance; only the bridge that loaded
+// last may stop it, so a stale bridge being torn down can't kill the new playback.
+let owner: object | null = null;
+
+const LANG_CODES = [
+  "ar", "en", "fr", "es", "de", "it", "pt", "ru", "tr", "fa", "ur", "hi", "bn", "id", "ms", "ja", "ko", "zh",
+  "nl", "sv", "no", "nb", "da", "fi", "pl", "cs", "sk", "hu", "ro", "bg", "el", "he", "uk", "sr", "hr", "sl",
+  "lt", "lv", "et", "th", "vi", "tl", "sq", "mk", "bs", "ca", "eu", "gl", "is", "ka", "hy", "az", "kk", "uz",
+  "sw", "am", "ta", "te", "ml", "kn", "mr", "pa", "gu", "si", "km", "lo", "my", "ne", "ps", "ku",
+];
+
+// ISO 639-2 (what most subtitle addons send) -> ISO 639-1.
+const ISO3: Record<string, string> = {
+  ara: "ar", eng: "en", fre: "fr", fra: "fr", spa: "es", ger: "de", deu: "de", ita: "it", por: "pt", pob: "pt-br",
+  rus: "ru", tur: "tr", per: "fa", fas: "fa", urd: "ur", hin: "hi", ben: "bn", ind: "id", may: "ms", msa: "ms",
+  jpn: "ja", kor: "ko", chi: "zh", zho: "zh", dut: "nl", nld: "nl", swe: "sv", nor: "no", nob: "nb", dan: "da",
+  fin: "fi", pol: "pl", cze: "cs", ces: "cs", slo: "sk", slk: "sk", hun: "hu", rum: "ro", ron: "ro", bul: "bg",
+  gre: "el", ell: "el", heb: "he", ukr: "uk", srp: "sr", scc: "sr", hrv: "hr", slv: "sl", lit: "lt", lav: "lv",
+  est: "et", tha: "th", vie: "vi", tgl: "tl", fil: "tl", alb: "sq", sqi: "sq", mac: "mk", mkd: "mk", bos: "bs",
+  cat: "ca", baq: "eu", eus: "eu", glg: "gl", ice: "is", isl: "is", geo: "ka", kat: "ka", arm: "hy", hye: "hy",
+  aze: "az", kaz: "kk", uzb: "uz", swa: "sw", amh: "am", tam: "ta", tel: "te", mal: "ml", kan: "kn", mar: "mr",
+  pan: "pa", guj: "gu", sin: "si", khm: "km", lao: "lo", bur: "my", mya: "my", nep: "ne", pus: "ps", kur: "ku",
+};
+
+let nameToCode: Map<string, string> | null = null;
+/** "Arabic" / "ara" / "ar" -> "ar" (ExoPlayer wants language codes). */
+function toLangCode(lang: string): string {
+  const l = lang.trim().toLowerCase().replace("_", "-");
+  if (ISO3[l]) return ISO3[l];
+  if (/^[a-z]{2,3}(-[a-z0-9]+)?$/.test(l)) return l;
+  if (!nameToCode) {
+    nameToCode = new Map();
+    try {
+      const dn = new Intl.DisplayNames(["en"], { type: "language" });
+      for (const c of LANG_CODES) {
+        const n = dn.of(c);
+        if (n) nameToCode.set(n.toLowerCase(), c);
+      }
+    } catch {
+      /* no Intl.DisplayNames */
+    }
+  }
+  return nameToCode.get(l) ?? l;
+}
+
+function langDisplayName(lang: string | undefined): string | null {
+  if (!lang) return null;
+  try {
+    const dn = new Intl.DisplayNames([uiLocale()], { type: "language" });
+    return dn.of(toLangCode(lang)) ?? lang;
+  } catch {
+    return lang;
+  }
+}
+
+function preferredSubLangs(): string[] {
+  try {
+    const raw = localStorage.getItem("harbor.settings");
+    const st = raw ? (JSON.parse(raw) as { preferredSubLangs?: unknown; preferredLanguages?: unknown }) : {};
+    const pick = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x) : []);
+    const langs = pick(st.preferredSubLangs).length > 0 ? pick(st.preferredSubLangs) : pick(st.preferredLanguages);
+    return langs.map(toLangCode);
+  } catch {
+    return [];
+  }
+}
+
+/** Settings > Language > preferred audio languages, as codes for the native player. */
+function preferredAudioLangs(): string[] {
+  try {
+    const raw = localStorage.getItem("harbor.settings");
+    const st = raw ? (JSON.parse(raw) as { preferredAudioLangs?: unknown }) : {};
+    const v = st.preferredAudioLangs;
+    // Not set yet: the defaults (src/lib/settings/defaults.ts).
+    const langs = Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x) : ["English", "Japanese"];
+    return langs.map(toLangCode);
+  } catch {
+    return [];
+  }
+}
+
+/** Harbor's subtitle look, used to seed the native player's style the first time. */
+function harborSubStyle(): Record<string, unknown> | null {
+  try {
+    const raw = localStorage.getItem("harbor.settings");
+    if (!raw) return null;
+    const st = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      fontSize: st.subFontSize,
+      color: st.subFontColor,
+      style: st.subStyle,
+      bold: st.subBold,
+      marginY: st.subMarginY,
+      boxOpacity: st.subBoxOpacity,
+    };
+  } catch {
+    return null;
+  }
+}
+
+type NativeSub = { url: string; lang?: string; label?: string };
+
+/** "OpenSubtitles · OpenSubtitles V3 #1" -> "OpenSubtitles V3 #1" */
+function tidyLabel(title?: string): string | undefined {
+  if (!title) return title;
+  const parts = title.split(" · ").map((p) => p.trim()).filter(Boolean);
+  const out = parts.filter((p, i) => !(i + 1 < parts.length && parts[i + 1].toLowerCase().startsWith(p.toLowerCase())));
+  return out.join(" · ");
+}
+
+function nativeSub(url: string, lang?: string, rawTitle?: string): NativeSub {
+  const title = tidyLabel(rawTitle);
+  const name = langDisplayName(lang);
+  const label = name && title ? `${name} · ${title}` : name ?? title;
+  return { url, lang: lang ? toLangCode(lang) : undefined, label: label ?? undefined };
+}
+
+/** Plays through the Android shell's native ExoPlayer (FFmpeg audio decoders included). */
+/** Lets the native player say "no subtitles found" instead of staying silent. */
+export function notifyAndroidSubSearch(found: number, manual = false) {
+  androidApi()?.command(JSON.stringify({ cmd: "subSearch", count: found, manual }));
+}
+
+export function createAndroidBridge(): PlayerBridge {
+  const api = androidApi();
+  let snap: PlayerSnapshot = { ...emptySnapshot };
+  const listeners = new Set<(s: PlayerSnapshot) => void>();
+  let title = "";
+  let active = false;
+  const token = {};
+  let pendingSubs: NativeSub[] = [];
+  let subTimer: number | null = null;
+  const sentSubUrls = new Set<string>();
+  // A stream switch inside the player loads without these: keep the title's identity (its
+  // subtitles stay) and its download (saved subtitles + the save button stay).
+  let lastContentKey = "";
+  let lastDownloadId = "";
+  const flushSubs = () => {
+    subTimer = null;
+    if (!active || owner !== token || pendingSubs.length === 0) return;
+    const batch = pendingSubs;
+    pendingSubs = [];
+    api?.command(JSON.stringify({ cmd: "addSubs", subs: batch, prefLangs: preferredSubLangs() }));
+  };
+
+  const emit = () => {
+    const next = { ...snap };
+    listeners.forEach((l) => l(next));
+  };
+
+  const off = onNativePlayerEvent((e) => {
+    if (!active || owner !== token) return;
+    if (e.type === "state") {
+      snap.positionSec = e.positionMs / 1000;
+      snap.durationSec = e.durationMs / 1000;
+      snap.bufferedSec = Math.max(0, (e.bufferedMs - e.positionMs) / 1000);
+      snap.buffering = e.buffering;
+      snap.rate = e.rate;
+      snap.videoWidth = e.width;
+      snap.videoHeight = e.height;
+      // Playing again after an error (the native player reconnected, or the user pressed play
+      // on its retry prompt): the error is over.
+      if (snap.status === "error" && (e.playing || (e.ready && e.playWhenReady))) {
+        snap.status = "playing";
+        snap.errorCode = null;
+        snap.errorMessage = null;
+      }
+      if (snap.status !== "error") {
+        snap.status = e.ended ? "ended" : e.playing ? "playing" : e.ready || !e.playWhenReady ? "paused" : "loading";
+      }
+      emit();
+    } else if (e.type === "ended") {
+      snap.status = "ended";
+      emit();
+    } else if (e.type === "error") {
+      snap.status = "error";
+      const code = e.code as PlayerSnapshot["errorCode"];
+      snap.errorCode = code === "decode" || code === "codec" || code === "network" || code === "source" ? code : "unknown";
+      snap.errorMessage = e.message;
+      emit();
+    } else if (e.type === "closed") {
+      snap.positionSec = e.positionMs / 1000;
+      if (e.durationMs > 0) snap.durationSec = e.durationMs / 1000;
+      snap.status = "paused";
+      active = false;
+      emit();
+    }
+  });
+
+  const cmd = (c: Record<string, unknown>) => api?.command(JSON.stringify(c));
+
+  return {
+    attach() {},
+    detach() {},
+    async load(src) {
+      snap = { ...emptySnapshot, status: "loading", volume: snap.volume, rate: snap.rate };
+      active = true;
+      owner = token;
+      pendingSubs = [];
+      if (subTimer != null) window.clearTimeout(subTimer);
+      subTimer = null;
+      sentSubUrls.clear();
+      const initialSubs = (src.subtitles ?? []).slice(0, MAX_INITIAL_SUBS).map((x) => {
+        sentSubUrls.add(x.url);
+        return nativeSub(x.url, x.lang, x.label);
+      });
+      emit();
+      if (src.contentKey != null) {
+        lastContentKey = src.contentKey;
+        lastDownloadId = src.downloadId ?? "";
+      }
+      api?.play(
+        JSON.stringify({
+          url: src.url,
+          headers: src.headers ?? {},
+          startMs: Math.max(0, Math.round((src.startAtSec ?? 0) * 1000)),
+          subtitles: initialSubs,
+          prefSubLangs: preferredSubLangs(),
+          prefAudioLangs: preferredAudioLangs(),
+          subStyle: harborSubStyle(),
+          title,
+          isLive: src.isLive === true,
+          contentKey: src.contentKey ?? lastContentKey,
+          downloadId: src.contentKey != null ? (src.downloadId ?? "") : lastDownloadId,
+        }),
+      );
+    },
+    async play() {
+      cmd({ cmd: "play" });
+    },
+    pause() {
+      cmd({ cmd: "pause" });
+    },
+    seek(sec) {
+      cmd({ cmd: "seek", ms: Math.max(0, Math.round(sec * 1000)) });
+    },
+    setVolume(v) {
+      snap.volume = v;
+      cmd({ cmd: "volume", volume: v });
+    },
+    setMuted(m) {
+      snap.muted = m;
+      cmd({ cmd: "volume", volume: m ? 0 : snap.volume });
+    },
+    setRate(r) {
+      cmd({ cmd: "rate", rate: r });
+    },
+    setAudioTrack() {},
+    setSubtitleTrack() {},
+    setSubVisible() {},
+    setSubDelay() {},
+    setAudioDelay() {},
+    setPanscan() {},
+    setVideoZoom() {},
+    setAspectOverride() {},
+    setAnime4kShaders() {},
+    // Addon / OpenSubtitles results arrive one by one after playback starts; batch them
+    // so the native player re-prepares once instead of once per subtitle.
+    async addSubtitle(url, lang, title) {
+      if (!active || owner !== token || !url) return false;
+      if (sentSubUrls.has(url)) return true;
+      sentSubUrls.add(url);
+      pendingSubs.push(nativeSub(url, lang, title));
+      if (subTimer != null) window.clearTimeout(subTimer);
+      subTimer = window.setTimeout(flushSubs, SUB_BATCH_MS);
+      return true;
+    },
+    getSelectedTrackCues: () => null,
+    getSelectedTrackUrl: () => null,
+    setAudioNormalize() {},
+    setMediaInfo(info) {
+      title = info.title;
+    },
+    async screenshot() {
+      return { ok: false, error: "not supported" };
+    },
+    setAbLoop() {},
+    async requestPiP() {},
+    async exitPiP() {},
+    async requestFullscreen() {},
+    async exitFullscreen() {},
+    capabilities: () => ({
+      engine: "html5",
+      pictureInPicture: false,
+      airplay: false,
+      chromecast: false,
+      hdrPassthrough: true,
+      hardwareDecode: true,
+    }),
+    subscribe(listener) {
+      listeners.add(listener);
+      listener({ ...snap });
+      return () => listeners.delete(listener);
+    },
+    destroy() {
+      if (subTimer != null) window.clearTimeout(subTimer);
+      off();
+      listeners.clear();
+      if (owner === token) {
+        api?.stop();
+        owner = null;
+      }
+      active = false;
+    },
+  };
+}

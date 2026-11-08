@@ -1,0 +1,350 @@
+import { Check, Download, ExternalLink, Key, Loader2, Trash2, X, Zap } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AddonLogo } from "@/components/addon-logo";
+import { Flag } from "@/components/flag";
+import { ServiceLogo } from "@/components/service-logo";
+import {
+  cometKeyFromUrl,
+  installAddon,
+  isInstalled,
+  transportUrlFor,
+  uninstallAddon,
+} from "@/lib/addon-store";
+import { openUrl } from "@/lib/window";
+import { useSettings, type StreamingService } from "@/lib/settings";
+import { t } from "@/lib/i18n/translate";
+
+export function pickDebridForAddon(s: ReturnType<typeof useSettings>["settings"]):
+  | { service: string; key: string; label: string }
+  | null {
+  if (s.tbKey) return { service: "torbox", key: s.tbKey, label: "TorBox" };
+  if (s.rdKey) return { service: "realdebrid", key: s.rdKey, label: "Real-Debrid" };
+  if (s.adKey) return { service: "alldebrid", key: s.adKey, label: "AllDebrid" };
+  if (s.pmKey) return { service: "premiumize", key: s.pmKey, label: "Premiumize" };
+  if (s.dlKey) return { service: "debridlink", key: s.dlKey, label: "Debrid-Link" };
+  return null;
+}
+
+export function RecommendedAddonCard({
+  id,
+  title,
+  blurb,
+  urlBuilder,
+  settings,
+}: {
+  id: string;
+  title: string;
+  blurb: string;
+  urlBuilder: (service: string, apiKey: string) => string;
+  settings: ReturnType<typeof useSettings>["settings"];
+}) {
+  const [installed, setInstalled] = useState(() => isInstalled(id));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const debrid = pickDebridForAddon(settings);
+
+  useEffect(() => {
+    setInstalled(isInstalled(id));
+    if (!debrid) return;
+    const url = transportUrlFor(id);
+    if (!url) return;
+    const current = cometKeyFromUrl(url);
+    const stale = !current || current.service !== debrid.service || current.apiKey !== debrid.key.trim();
+    if (!stale) return;
+    installAddon(id, urlBuilder(debrid.service, debrid.key)).catch(() => {});
+  }, [id, debrid, urlBuilder, settings.tbKey, settings.rdKey, settings.adKey, settings.pmKey, settings.dlKey]);
+
+  const onInstall = async () => {
+    if (!debrid) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await installAddon(id, urlBuilder(debrid.service, debrid.key));
+      setInstalled(true);
+    } catch (e: any) {
+      setError(e?.message ?? "Install failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onUninstall = () => {
+    void uninstallAddon(id);
+    setInstalled(false);
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-xl border border-edge-soft bg-canvas/40 px-4 py-3.5">
+      <AddonLogo addonId={id} addonName={title} size="lg" />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="text-[15px] font-medium text-ink">{title}</span>
+          {installed && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-accent/15 px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-[0.18em] text-accent ring-1 ring-accent/40">
+              <Zap size={9} fill="currentColor" strokeWidth={0} />
+              {t("Installed via")} {debrid?.label ?? "debrid"}
+            </span>
+          )}
+        </div>
+        <span className="text-[12.5px] leading-relaxed text-ink-muted">{blurb}</span>
+        {error && <span className="text-[12px] text-danger">{error}</span>}
+        {!debrid && !installed && (
+          <span className="text-[12px] text-ink-subtle">
+            {t("Save a debrid key above (TorBox, Real-Debrid, AllDebrid, Premiumize, or Debrid-Link) to enable this.")}
+          </span>
+        )}
+      </div>
+      {installed ? (
+        <button
+          onClick={onUninstall}
+          className="flex h-10 w-full items-center justify-center gap-1.5 rounded-lg border border-edge bg-elevated px-3.5 text-[13px] font-medium text-ink-muted transition-colors hover:border-danger/60 hover:bg-danger/10 hover:text-danger sm:w-auto"
+        >
+          <Trash2 size={13} strokeWidth={2.2} />
+          {t("Remove")}
+        </button>
+      ) : (
+        <button
+          onClick={onInstall}
+          disabled={!debrid || busy}
+          className="flex h-10 w-full items-center justify-center gap-1.5 rounded-lg bg-ink px-4 text-[13px] font-semibold text-canvas transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
+        >
+          {busy ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} strokeWidth={2.2} />}
+          {t("Install")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function normalizeManifestUrl(raw: string): string {
+  let url = raw.trim();
+  if (url.startsWith("stremio://")) url = "https://" + url.slice("stremio://".length);
+  url = url.replace(/\/#\/configure\/?$/, "");
+  url = url.replace(/\/configure\/?$/, "");
+  if (/manifest\.json(\?.*)?$/.test(url)) return url;
+  return url.replace(/\/+$/, "") + "/manifest.json";
+}
+
+export function ManualAddonCard({
+  title,
+  blurb,
+  configureUrl,
+}: {
+  title: string;
+  blurb: string;
+  configureUrl: string;
+}) {
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const localId = `harbor-manual-${slug}`;
+  const [installedId, setInstalledId] = useState<string | null>(() => {
+    const fromAlias = transportUrlFor(localId) ? localId : null;
+    return fromAlias;
+  });
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const onInstall = async () => {
+    const url = draft.trim();
+    if (!url) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const manifestUrl = normalizeManifestUrl(url);
+      const installed = await installAddon(localId, manifestUrl);
+      setInstalledId(installed.manifest.id || localId);
+      setDraft("");
+    } catch (e: any) {
+      setError(e?.message ?? "Couldn't install. Double-check the URL and try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onUninstall = () => {
+    void uninstallAddon(localId);
+    setInstalledId(null);
+  };
+
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-edge-soft bg-canvas/40 px-4 py-3.5">
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
+        <AddonLogo addonId={localId} addonName={title} size="lg" />
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="text-[15px] font-medium text-ink">{title}</span>
+            {installedId && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-accent/15 px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-[0.18em] text-accent ring-1 ring-accent/40">
+                <Check size={9} strokeWidth={3} />
+                {t("Installed")}
+              </span>
+            )}
+          </div>
+          <span className="text-[12.5px] leading-relaxed text-ink-muted">{blurb}</span>
+        </div>
+        <div className="flex w-full items-center gap-2 sm:w-auto sm:shrink-0">
+          <button
+            onClick={() => openUrl(configureUrl)}
+            className="flex h-10 flex-1 items-center justify-center gap-1.5 sm:flex-none rounded-lg border border-edge bg-elevated px-3.5 text-[13px] font-medium text-ink-muted transition-colors hover:border-ink-subtle hover:text-ink"
+          >
+            <ExternalLink size={13} strokeWidth={2.2} />
+            {t("Configure")}
+          </button>
+          {installedId && (
+            <button
+              onClick={onUninstall}
+              className="flex h-10 flex-1 items-center justify-center gap-1.5 sm:flex-none rounded-lg border border-edge bg-elevated px-3.5 text-[13px] font-medium text-ink-muted transition-colors hover:border-danger/60 hover:bg-danger/10 hover:text-danger"
+            >
+              <Trash2 size={13} strokeWidth={2.2} />
+              {t("Remove")}
+            </button>
+          )}
+        </div>
+      </div>
+      {!installedId && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg border border-edge bg-canvas px-3.5 transition-colors focus-within:border-ink-subtle">
+            <Key size={15} className="shrink-0 text-ink-subtle" />
+            <input
+              type="text"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onPaste={(e) => {
+                const text = e.clipboardData.getData("text").trim();
+                if (text) {
+                  e.preventDefault();
+                  setDraft(text);
+                }
+              }}
+              placeholder={t("Paste the manifest URL the configure page gave you")}
+              spellCheck={false}
+              autoComplete="off"
+              className="h-11 min-w-0 flex-1 bg-transparent text-[14.5px] text-ink placeholder:text-ink-subtle/60 outline-none"
+            />
+          </div>
+          <button
+            onClick={onInstall}
+            disabled={!draft.trim() || busy}
+            className="flex h-11 items-center justify-center gap-1.5 rounded-lg bg-ink px-5 text-[14px] font-semibold text-canvas transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:shrink-0"
+          >
+            {busy ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} strokeWidth={2.2} />}
+            {t("Install")}
+          </button>
+        </div>
+      )}
+      {error && <span className="text-[12px] text-danger">{error}</span>}
+    </div>
+  );
+}
+
+const LANGUAGE_OPTIONS = [
+  "English",
+  "Spanish",
+  "Spanish (Latin America)",
+  "French",
+  "German",
+  "Italian",
+  "Portuguese",
+  "Russian",
+  "Japanese",
+  "Korean",
+  "Chinese",
+  "Hindi",
+  "Arabic",
+  "Turkish",
+  "Dutch",
+  "Polish",
+  "Ukrainian",
+  "Czech",
+  "Hungarian",
+  "Romanian",
+  "Swedish",
+  "Norwegian",
+  "Danish",
+  "Finnish",
+  "Hebrew",
+  "Thai",
+  "Vietnamese",
+];
+
+export function LanguagesPicker({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const selected = new Set(value);
+  const toggle = (lang: string) => {
+    const next = new Set(selected);
+    if (next.has(lang)) next.delete(lang);
+    else next.add(lang);
+    onChange([...next]);
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-2 rounded-xl border border-edge-soft bg-canvas/40 px-3 py-2.5">
+          {value.map((lang) => (
+            <button
+              key={lang}
+              onClick={() => toggle(lang)}
+              className="group inline-flex items-center gap-2 rounded-full border border-accent/40 bg-accent/15 px-3 py-1.5 text-[12.5px] font-semibold text-accent transition-colors hover:bg-accent/25"
+            >
+              <Flag language={lang} size="sm" showLabel={false} />
+              <span>{lang}</span>
+              <X size={11} strokeWidth={2.4} className="opacity-70 group-hover:opacity-100" />
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-1.5">
+        {LANGUAGE_OPTIONS.map((lang) => {
+          const active = selected.has(lang);
+          if (active) return null;
+          return (
+            <button
+              key={lang}
+              onClick={() => toggle(lang)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-edge-soft bg-canvas/30 px-2.5 py-1.5 text-[12px] font-medium text-ink-muted transition-colors hover:border-edge hover:text-ink"
+            >
+              <Flag language={lang} size="sm" showLabel={false} />
+              <span>{lang}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
+export function ServiceCard({
+  service,
+  active,
+  onToggle,
+}: {
+  service: StreamingService;
+  active: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      aria-pressed={active}
+      className={`relative flex h-20 items-center justify-center overflow-hidden rounded-xl border px-4 transition-all ${
+        active
+          ? "border-ink-subtle/50 bg-raised opacity-100"
+          : "border-edge-soft bg-canvas opacity-55 hover:opacity-90"
+      }`}
+    >
+      <ServiceLogo service={service} height={26} />
+      {active && (
+        <span className="absolute end-2 top-2 flex h-4 w-4 items-center justify-center rounded-full bg-ink">
+          <Check size={11} strokeWidth={3} className="text-canvas" />
+        </span>
+      )}
+    </button>
+  );
+}

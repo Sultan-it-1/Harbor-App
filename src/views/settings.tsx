@@ -1,0 +1,338 @@
+import { ChevronLeft } from "lucide-react";
+import { isPhoneLayout } from "@/lib/platform";
+import { pushAndroidBackHandler } from "@/lib/android";
+import { useEffect, useRef, useState } from "react";
+import { AccountStub } from "./settings/account";
+import { AdvancedPanel } from "./settings/advanced-panel";
+import { BasicsPanel } from "./settings/basics-panel";
+import { LibraryPanel, type LibraryKey } from "./settings/library-panel";
+import { LanguagePanel } from "./settings/language-panel";
+import { SettingsNav } from "./settings/nav";
+import { SettingsJumpBar } from "./settings/jump-bar";
+import { HotkeysPanel } from "./settings/hotkeys-panel";
+import { PlayerLayoutPanel } from "./settings/player-layout-panel";
+import { QualityPanel } from "./settings/quality-panel";
+import { MpvPanel } from "./settings/mpv-panel";
+import { P2PPanel } from "./settings/p2p-panel";
+import { AnimePanel } from "./settings/anime-panel";
+import { TraktPanel } from "./settings/trakt-panel";
+import { SimklPanel } from "./settings/simkl-panel";
+import { RelaySection, type RelayMode } from "./settings/relay-section";
+import { SettingsActiveContext, type SectionId } from "./settings/shared";
+import { StreamingSourcesPanel, type DebridKey } from "./settings/streaming-sources-panel";
+import { ThemePanel } from "./settings/theme-panel";
+import { WebhooksPanel } from "./settings/webhooks-panel";
+import { BackToTop } from "@/components/back-to-top";
+import { resetOmdbBudget } from "@/lib/providers/omdb";
+import { useSettings } from "@/lib/settings";
+import { useView } from "@/lib/view";
+import { useT } from "@/lib/i18n";
+
+
+const SECTION_META: Record<SectionId, { label: string; sub: string }> = {
+  basics: {
+    label: "Get started",
+    sub: "The handful of settings most people set once. Sign in, choose how Play behaves, and pick your look.",
+  },
+  account: {
+    label: "Account",
+    sub: "Your Stremio sign-in. Library, watch progress, and addons sync from here.",
+  },
+  library: {
+    label: "Library & metadata",
+    sub: "Optional keys that unlock TMDB rails, baked-in poster ratings, fanart, and TVDB episode data.",
+  },
+  trakt: {
+    label: "Trakt",
+    sub: "Connect your Trakt account to scrobble playback, sync your watchlist, and pull personalized recommendations.",
+  },
+  simkl: {
+    label: "Simkl",
+    sub: "Connect your Simkl account to mark what you finish as watched and sync your plan-to-watch list across apps.",
+  },
+  relay: {
+    label: "Harbor Relay",
+    sub: "A Cloudflare Worker on your own account that hosts your Watch Together rooms.",
+  },
+  streaming: {
+    label: "Streaming sources",
+    sub: "How Harbor finds and resolves playable streams. Debrid keys and addon installs live here.",
+  },
+  p2p: {
+    label: "P2P & servers",
+    sub: "Harbor's built-in peer-to-peer engine, its self-test, and any streaming server you point it at.",
+  },
+  language: {
+    label: "Languages",
+    sub: "Which audio and subtitle languages rank first in stream lists.",
+  },
+  player: {
+    label: "Player & quality",
+    sub: "Pick the playback engine and aspect, shape the audio, and set how episodes skip and advance.",
+  },
+  mpv: {
+    label: "Video tuning",
+    sub: "Match the picture quality to your computer, smooth out weak connections, and fine-tune the mpv engine with plain-language controls.",
+  },
+  anime: {
+    label: "Anime tweaks",
+    sub: "Anime4K real-time upscaling, smooth motion, and where SVP fits in. All the anime-specific picture enhancements in one place.",
+  },
+  playerLayout: {
+    label: "Player layout",
+    sub: "Pick a theme, then rearrange every button in the player chrome. Hide what you never use, promote what you do.",
+  },
+  hotkeys: {
+    label: "Hotkeys",
+    sub: "Every shortcut Harbor responds to. Click a binding to rebind it.",
+  },
+  theme: {
+    label: "Theme & appearance",
+    sub: "Color presets, custom backgrounds, and the font pair Harbor renders in.",
+  },
+  webhooks: {
+    label: "Webhooks",
+    sub: "Push upcoming releases to Discord or Telegram. Pick which calendars feed the notifications.",
+  },
+  advanced: {
+    label: "Advanced",
+    sub: "Diagnostics, manual overrides, things most users never need.",
+  },
+};
+
+type SavedKey = LibraryKey | DebridKey;
+
+export function Settings() {
+  const t = useT();
+  const { settings, update } = useSettings();
+  const [tmdbDraft, setTmdbDraft] = useState(settings.tmdbKey);
+  const [omdbDraft, setOmdbDraft] = useState(settings.omdbKey);
+  const [rpdbDraft, setRpdbDraft] = useState(settings.rpdbKey);
+  const [fanartDraft, setFanartDraft] = useState(settings.fanartKey);
+  const [tvdbDraft, setTvdbDraft] = useState(settings.tvdbKey);
+  const [rdDraft, setRdDraft] = useState(settings.rdKey);
+  const [tbDraft, setTbDraft] = useState(settings.tbKey);
+  const [adDraft, setAdDraft] = useState(settings.adKey);
+  const [pmDraft, setPmDraft] = useState(settings.pmKey);
+  const [dlDraft, setDlDraft] = useState(settings.dlKey);
+  const [savedKey, setSavedKey] = useState<SavedKey | null>(null);
+  const { settingsSectionRequest } = useView();
+  const [active, setActive] = useState<SectionId>(
+    (settingsSectionRequest.section as SectionId | null) ?? "account",
+  );
+  const [relayMode, setRelayMode] = useState<RelayMode>("panel");
+  const [pendingAnchor, setPendingAnchor] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLElement>(null);
+
+  // Phone: list of sections first, then one section full screen (back returns to the list).
+  const phone = isPhoneLayout();
+  const [phoneSection, setPhoneSection] = useState(() => !!settingsSectionRequest.section);
+  useEffect(() => {
+    if (!phone || !phoneSection) return;
+    return pushAndroidBackHandler(() => {
+      setPhoneSection(false);
+      return true;
+    });
+  }, [phone, phoneSection]);
+
+  const handleNav = (id: SectionId, anchor?: string) => {
+    setActive(id);
+    setPendingAnchor(anchor ?? null);
+    if (phone) setPhoneSection(true);
+  };
+
+  useEffect(() => {
+    if (settingsSectionRequest.section) {
+      setActive(settingsSectionRequest.section as SectionId);
+      if (phone) setPhoneSection(true);
+    }
+  }, [settingsSectionRequest]);
+
+  useEffect(() => {
+    if (active !== "relay") setRelayMode("panel");
+  }, [active]);
+
+  const pendingAnchorRef = useRef<string | null>(null);
+  pendingAnchorRef.current = pendingAnchor;
+
+  useEffect(() => {
+    if (pendingAnchorRef.current) return;
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [active]);
+
+  useEffect(() => {
+    if (!pendingAnchor) return;
+    const target = pendingAnchor;
+    let tries = 0;
+    let timer = 0;
+    const findTarget = (): HTMLElement | null => {
+      const exact = document.getElementById(target);
+      if (exact) return exact;
+      const root = scrollRef.current;
+      if (!root) return null;
+      const sections = Array.from(root.querySelectorAll<HTMLElement>('section[id^="set-"]'));
+      let best: HTMLElement | null = null;
+      for (const s of sections) {
+        if (!(s.id.startsWith(target) || target.startsWith(s.id))) continue;
+        if (best == null || Math.abs(s.id.length - target.length) < Math.abs(best.id.length - target.length)) {
+          best = s;
+        }
+      }
+      return best;
+    };
+    const tryScroll = () => {
+      const el = findTarget();
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        el.style.transition = "box-shadow 0.5s ease";
+        el.style.boxShadow = "0 0 0 2px var(--color-accent)";
+        window.setTimeout(() => {
+          el.style.boxShadow = "0 0 0 0 transparent";
+        }, 1300);
+        window.setTimeout(() => {
+          el.style.transition = "";
+          el.style.boxShadow = "";
+        }, 1900);
+        setPendingAnchor(null);
+        return;
+      }
+      if (tries++ < 30) timer = window.setTimeout(tryScroll, 50);
+      else setPendingAnchor(null);
+    };
+    timer = window.setTimeout(tryScroll, 60);
+    return () => window.clearTimeout(timer);
+  }, [active, pendingAnchor]);
+
+  const saveKey = (which: SavedKey, value: string) => {
+    const trimmed = value.trim();
+    if (which === "tmdb") update({ tmdbKey: trimmed });
+    else if (which === "omdb") {
+      update({ omdbKey: trimmed });
+      resetOmdbBudget();
+    } else if (which === "rpdb") {
+      if (trimmed) update({ rpdbKey: trimmed, showImdbBadge: false, showRtBadge: false });
+      else update({ rpdbKey: trimmed });
+    }
+    else if (which === "fanart") update({ fanartKey: trimmed });
+    else if (which === "tvdb") update({ tvdbKey: trimmed });
+    else if (which === "rd") update({ rdKey: trimmed });
+    else if (which === "tb") update({ tbKey: trimmed });
+    else if (which === "ad") update({ adKey: trimmed });
+    else if (which === "pm") update({ pmKey: trimmed });
+    else if (which === "dl") update({ dlKey: trimmed });
+    setSavedKey(which);
+    setTimeout(() => setSavedKey((s) => (s === which ? null : s)), 1400);
+  };
+
+  return (
+    <SettingsActiveContext.Provider value={{ setActive }}>
+    <div className="flex h-full bg-canvas">
+      {(!phone || !phoneSection) && (
+        <div className={phone ? "min-h-0 w-full overflow-y-auto" : "contents"}>
+          <SettingsNav active={active} onChange={handleNav} />
+        </div>
+      )}
+      {(!phone || phoneSection) && (
+      <main
+        ref={scrollRef}
+        className={`min-w-0 flex-1 overflow-y-auto ${phone ? "pt-24 pb-10 [contain:inline-size]" : "pt-28 pb-16"}`}
+      >
+        {/* Phone: the page is exactly as wide as the screen whatever is inside it. inline-size
+            containment stops content (a long address, a row that can't shrink) from making the
+            page wider and cut off at the right edge; long links and emails wrap instead. */}
+        <div
+          data-tauri-drag-region
+          className={`mx-auto flex w-full min-w-0 max-w-3xl flex-col ${phone ? "gap-7 px-4 [contain:inline-size] [overflow-wrap:break-word]" : "gap-10 px-12"}`}
+        >
+          {phone && (
+            <button
+              onClick={() => setPhoneSection(false)}
+              className="-ms-1 flex h-9 w-fit items-center gap-1.5 rounded-full pe-3 ps-1 text-[14px] font-medium text-ink-muted active:bg-elevated"
+            >
+              <ChevronLeft size={18} className="dir-icon" />
+              {t("Settings")}
+            </button>
+          )}
+          {!(active === "relay" && relayMode !== "panel") && (
+            <header className="flex flex-col gap-2">
+              <h1 className={`font-display font-medium leading-[1.05] tracking-tight text-ink ${phone ? "text-[30px]" : "text-[44px]"}`}>
+                {t(SECTION_META[active].label)}
+              </h1>
+              <p className="text-[15px] text-ink-muted">{t(SECTION_META[active].sub)}</p>
+            </header>
+          )}
+
+          {active === "basics" && <BasicsPanel />}
+
+          {active === "account" && <AccountStub />}
+
+          {active === "library" && (
+            <LibraryPanel
+              tmdbDraft={tmdbDraft}
+              omdbDraft={omdbDraft}
+              rpdbDraft={rpdbDraft}
+              fanartDraft={fanartDraft}
+              tvdbDraft={tvdbDraft}
+              setTmdbDraft={setTmdbDraft}
+              setOmdbDraft={setOmdbDraft}
+              setRpdbDraft={setRpdbDraft}
+              setFanartDraft={setFanartDraft}
+              setTvdbDraft={setTvdbDraft}
+              savedKey={savedKey}
+              saveKey={saveKey}
+            />
+          )}
+
+          {active === "relay" && (
+            <RelaySection mode={relayMode} onModeChange={setRelayMode} />
+          )}
+
+          {active === "streaming" && (
+            <StreamingSourcesPanel
+              rdDraft={rdDraft}
+              tbDraft={tbDraft}
+              adDraft={adDraft}
+              pmDraft={pmDraft}
+              dlDraft={dlDraft}
+              setRdDraft={setRdDraft}
+              setTbDraft={setTbDraft}
+              setAdDraft={setAdDraft}
+              setPmDraft={setPmDraft}
+              setDlDraft={setDlDraft}
+              savedKey={savedKey}
+              saveKey={saveKey}
+            />
+          )}
+
+          {active === "p2p" && <P2PPanel />}
+
+          {active === "language" && <LanguagePanel />}
+
+          {active === "player" && <QualityPanel />}
+
+          {active === "mpv" && <MpvPanel />}
+
+          {active === "anime" && <AnimePanel />}
+
+          {active === "playerLayout" && <PlayerLayoutPanel />}
+
+          {active === "hotkeys" && <HotkeysPanel />}
+
+          {active === "trakt" && <TraktPanel />}
+
+          {active === "simkl" && <SimklPanel />}
+
+          {active === "theme" && <ThemePanel />}
+
+          {active === "webhooks" && <WebhooksPanel />}
+
+          {active === "advanced" && <AdvancedPanel />}
+        </div>
+      </main>
+      )}
+      <BackToTop scrollRef={scrollRef} />
+      {!phone && <SettingsJumpBar scrollRef={scrollRef} activeSection={active} />}
+    </div>
+    </SettingsActiveContext.Provider>
+  );
+}

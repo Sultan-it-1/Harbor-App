@@ -1,0 +1,39 @@
+import en from "./locales/en";
+import ar from "./locales/ar";
+import { getUiLanguage, useUiLanguage } from "./store";
+import { isRtl, LANGUAGES, type UiLanguage } from "./languages";
+
+type Vars = Record<string, string | number>;
+
+const catalogs: Record<UiLanguage, Record<string, string>> = { en, ar };
+
+function interpolate(template: string, vars?: Vars): string {
+  if (!vars) return template;
+  let out = template;
+  for (const [name, value] of Object.entries(vars)) {
+    out = out.split(`{${name}}`).join(String(value));
+  }
+  return out;
+}
+
+function resolve(lang: UiLanguage, key: string): string {
+  const active = catalogs[lang]?.[key];
+  if (active !== undefined) return active;
+  // Test hook: a UI sweep sets window.__harborI18nMisses to a Set to collect the texts this
+  // language is missing (labels that come from data never show up in a scan of the code).
+  if (lang !== "en") (globalThis as { __harborI18nMisses?: Set<string> }).__harborI18nMisses?.add(key);
+  const fallback = catalogs.en[key];
+  if (fallback !== undefined) return fallback;
+  return key;
+}
+
+export function t(key: string, vars?: Vars): string {
+  return interpolate(resolve(getUiLanguage(), key), vars);
+}
+
+export function useT(): (key: string, vars?: Vars) => string {
+  const lang = useUiLanguage();
+  return (key: string, vars?: Vars) => interpolate(resolve(lang, key), vars);
+}
+
+export { useUiLanguage, isRtl, LANGUAGES };
