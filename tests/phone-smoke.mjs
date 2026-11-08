@@ -93,13 +93,13 @@ for (const lang of ["en", "ar"]) {
   await page.waitForTimeout(1500);
   const sections = await page.evaluate(() => {
     const nav = [...document.querySelectorAll("nav")].find((n) => n.getBoundingClientRect().width > 0);
-    return nav ? [...nav.querySelectorAll("button")].map((b) => b.innerText.trim().split("\n")[0]).filter(Boolean) : [];
+    return nav ? [...nav.querySelectorAll("button[data-section]")].map((b) => b.innerText.trim().split("\n")[0]).filter(Boolean) : [];
   });
   if (sections.length < 8) failures.push(`${lang}: the Settings list shows only ${sections.length} sections`);
   for (const label of sections) {
     const opened = await page.evaluate((label) => {
       const nav = [...document.querySelectorAll("nav")].find((n) => n.getBoundingClientRect().width > 0);
-      const b = nav && [...nav.querySelectorAll("button")].find((x) => x.innerText.trim().split("\n")[0] === label);
+      const b = nav && [...nav.querySelectorAll("button[data-section]")].find((x) => x.innerText.trim().split("\n")[0] === label);
       b?.click();
       return !!b;
     }, label);

@@ -6,6 +6,7 @@ import { activeLayout } from "@/lib/theme";
 import { useView } from "@/lib/view";
 import { settingsAnchor, type SectionId } from "./shared";
 import { markSectionSeen, useSettingsNew } from "./settings-new";
+import { AppUpdateCard } from "./app-update-card";
 
 type IconProps = { size?: number; strokeWidth?: number };
 
@@ -643,6 +644,7 @@ export function SettingsNav({
     return (
       <button
         key={id}
+        data-section={id}
         onClick={() => {
           onChange(id);
           setQuery("");
@@ -746,6 +748,8 @@ export function SettingsNav({
         </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-3 pb-8">
+        {/* The Android app's updates, first thing on the Settings page. */}
+        {!query && <AppUpdateCard />}
         {matches && (
           <div className="flex flex-col gap-1">
             {matches.length === 0 && (!optionMatches || optionMatches.length === 0) && (
@@ -807,6 +811,7 @@ export function SettingsNav({
               return (
                 <button
                   key={id}
+                  data-section={id}
                   onClick={() => {
                     onChange(id);
                     markSectionSeen(id);

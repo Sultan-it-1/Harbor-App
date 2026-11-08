@@ -1829,6 +1829,13 @@ const settings: Record<string, string> = {
   "Disconnect to change keys.": "اقطع الاتصال لتغيير المفاتيح.",
   "Trakt didn't accept your Client ID. Check it in Settings → Trakt, or switch back to Harbor's keys.": "لم يقبل Trakt معرّف العميل الخاص بك. تحقّق منه في الإعدادات ← Trakt، أو ارجع إلى مفاتيح Harbor.",
   "Simkl didn't accept your Client ID. Check it in Settings → Simkl, or switch back to Harbor's keys.": "لم يقبل Simkl معرّف العميل الخاص بك. تحقّق منه في الإعدادات ← Simkl، أو ارجع إلى مفاتيح Harbor.",
+  "Couldn't check for updates.": "تعذّر التحقق من التحديثات.",
+  "You have {version}.": "لديك الإصدار {version}.",
+  "What's new": "ما الجديد",
+  "Allow Harbor to install updates (Android asks once), then come back: the update starts by itself.":
+    "اسمح لـ Harbor بتثبيت التحديثات (يطلبها أندرويد مرة واحدة)، ثم ارجع: يبدأ التحديث تلقائيًا.",
+  "Downloading… {pct}%": "جارٍ التنزيل… {pct}%",
+  "Opening the installer… Tap Update there.": "جارٍ فتح المثبّت… اضغط «تحديث» هناك.",
 };
 
 export default settings;

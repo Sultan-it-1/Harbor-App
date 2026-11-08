@@ -20,6 +20,7 @@ import { useParental, type LockableTab } from "@/lib/parental";
 import { useSearch } from "@/lib/search-context";
 import { useSettings } from "@/lib/settings";
 import { useView, type View } from "@/lib/view";
+import { checkAndroidUpdate, useAndroidUpdate } from "@/lib/updater/android-update";
 
 /** Height of the bar above the safe-area inset; content gets this much bottom padding. */
 export const PHONE_TABBAR_H = 60;
@@ -52,6 +53,13 @@ export function PhoneTabBar() {
   const { settings } = useSettings();
   const t = useT();
   const [moreOpen, setMoreOpen] = useState(false);
+  // A new version of the app: a dot on More and on Settings (the update is on the Settings page).
+  const update = useAndroidUpdate();
+  const updateWaiting = update.status === "available" || update.status === "permission";
+  useEffect(() => {
+    const id = window.setTimeout(() => void checkAndroidUpdate(false), 8000);
+    return () => window.clearTimeout(id);
+  }, []);
   const { openPicker: openProfiles, activeProfile } = useProfiles();
   const [pinFor, setPinFor] = useState<View | null>(null);
   // Highlight the tapped tab immediately; the (heavy) view switch renders in a transition,
@@ -131,7 +139,12 @@ export function PhoneTabBar() {
                       active ? "bg-accent-soft text-ink" : "bg-elevated/60 text-ink-muted"
                     }`}
                   >
-                    <span className="grid h-7 w-7 place-items-center">{it.icon(active)}</span>
+                    <span className="relative grid h-7 w-7 place-items-center">
+                      {it.icon(active)}
+                      {it.view === "settings" && updateWaiting && (
+                        <span className="absolute -end-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-accent ring-2 ring-canvas" />
+                      )}
+                    </span>
                     {t(it.label)}
                   </button>
                 );
@@ -201,7 +214,12 @@ export function PhoneTabBar() {
               setSearchOpen(false);
             }}
           >
-            {(a) => <MoreHorizontal size={22} strokeWidth={a ? 2.4 : 1.8} />}
+            {(a) => (
+              <span className="relative">
+                <MoreHorizontal size={22} strokeWidth={a ? 2.4 : 1.8} />
+                {updateWaiting && <span className="absolute -end-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-accent ring-2 ring-canvas" />}
+              </span>
+            )}
           </Tab>
         </div>
       </nav>

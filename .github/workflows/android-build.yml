@@ -144,6 +144,17 @@ jobs:
             echo "HARBOR_PUBLISH=true" >> "$GITHUB_ENV"
           fi
 
+      # What's new: the release commit's message, without its "Harbor App x.y.z" title (the app
+      # shows it on the Settings page when it offers the update).
+      - name: Release notes
+        if: github.ref == 'refs/heads/main' && env.HARBOR_PUBLISH == 'true'
+        run: |
+          {
+            echo "HARBOR_NOTES<<HARBOR_NOTES_END"
+            git log -1 --format=%B | sed '1{/^Harbor App /d}' | sed '/^Co-Authored-By:/d;/^Claude-Session:/d' | sed '/./,$!d'
+            echo "HARBOR_NOTES_END"
+          } >> "$GITHUB_ENV"
+
       - name: Publish release
         if: github.ref == 'refs/heads/main' && env.HARBOR_PUBLISH == 'true'
         uses: softprops/action-gh-release@v3
@@ -153,8 +164,11 @@ jobs:
           target_commitish: ${{ github.sha }}
           make_latest: "true"
           body: |
+            ${{ env.HARBOR_NOTES }}
+
+            ---
             Download **harbor-android.apk** below, open it on your phone and allow
-            "install from unknown sources" when Android asks.
+            "install from unknown sources" when Android asks (or update from Settings in the app).
 
             SHA-256: `${{ env.HARBOR_APK_SHA256 }}`
           files: android/app/build/outputs/apk/release/harbor-android.apk
