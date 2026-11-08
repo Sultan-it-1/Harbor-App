@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Meta } from "@/lib/cinemeta";
-import {
-  animeFranchiseKey,
-  jikanRecommendationsForMalId,
-  jikanResolveMalId,
-  stripFranchiseSuffix,
-} from "@/lib/providers/jikan";
+import { animeMalIdByTitle, animeRecommendationsForMalId } from "@/lib/anilist/catalog";
+import { animeFranchiseKey, stripFranchiseSuffix } from "@/lib/providers/jikan";
 import type { LibraryItem } from "@/lib/stremio";
 
-const MAL_CACHE_KEY = "harbor.anime.mal_id_by_franchise.v1";
-const REC_CACHE_KEY = "harbor.anime.recs_by_mal.v1";
+const MAL_CACHE_KEY = "harbor.anime.mal_id_by_franchise.v2";
+const REC_CACHE_KEY = "harbor.anime.recs_by_mal.v2";
 const REC_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 type MalIdCache = Record<string, number | null>;
@@ -66,7 +62,13 @@ export async function malIdForItem(item: LibraryItem): Promise<number | null> {
   const cache = loadMalCache();
   const fk = animeFranchiseKey(stripFranchiseSuffix(item.name));
   if (fk in cache) return cache[fk];
-  const id = await jikanResolveMalId(stripFranchiseSuffix(item.name));
+  // From AniList; offline, nothing is kept (asked again next time).
+  let id: number | null;
+  try {
+    id = await animeMalIdByTitle(stripFranchiseSuffix(item.name));
+  } catch {
+    return null;
+  }
   cache[fk] = id;
   scheduleSave();
   return id;
@@ -76,7 +78,13 @@ async function recsForMalId(malId: number): Promise<Meta[]> {
   const cache = loadRecCache();
   const hit = cache[String(malId)];
   if (hit && Date.now() - hit.t < REC_TTL_MS) return hit.metas;
-  const metas = await jikanRecommendationsForMalId(malId);
+  // From AniList; offline, nothing is kept (asked again next time).
+  let metas: Meta[];
+  try {
+    metas = await animeRecommendationsForMalId(malId);
+  } catch {
+    return [];
+  }
   cache[String(malId)] = { metas, t: Date.now() };
   scheduleSave();
   return metas;

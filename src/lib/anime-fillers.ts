@@ -1,11 +1,11 @@
+import { animeFactsByMalId } from "@/lib/anilist/catalog";
 import { safeFetch } from "@/lib/safe-fetch";
 import { fetch as tauriHttpFetch } from "@tauri-apps/plugin-http";
 
-const CACHE_KEY = "harbor.animefillercache.v2";
+const CACHE_KEY = "harbor.animefillercache.v3";
 const TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const NEG_TTL_MS = 24 * 60 * 60 * 1000;
 const AFL = "https://www.animefillerlist.com/shows";
-const JIKAN = "https://api.jikan.moe/v4";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Harbor";
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -66,30 +66,11 @@ function slugify(title: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+/** The anime's names and year, for animefillerlist.com's page names (from AniList). */
 async function malInfo(malId: number): Promise<{ titles: string[]; year?: number }> {
   try {
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 8000);
-    const r = await fetch(`${JIKAN}/anime/${malId}`, { signal: ac.signal }).finally(() =>
-      clearTimeout(timer),
-    );
-    if (!r.ok) return { titles: [] };
-    const j = (await r.json()) as {
-      data?: {
-        title?: string;
-        title_english?: string;
-        titles?: Array<{ title?: string }>;
-        year?: number;
-        aired?: { from?: string };
-      };
-    };
-    const d = j?.data ?? {};
-    const titles: string[] = [];
-    if (d.title_english) titles.push(d.title_english);
-    if (d.title) titles.push(d.title);
-    for (const x of d.titles ?? []) if (x?.title) titles.push(x.title);
-    const year = d.year ?? (d.aired?.from ? Number(d.aired.from.slice(0, 4)) : undefined);
-    return { titles, year: year && Number.isFinite(year) ? year : undefined };
+    const facts = await animeFactsByMalId(malId);
+    return { titles: facts?.titles ?? [], year: facts?.year };
   } catch {
     return { titles: [] };
   }

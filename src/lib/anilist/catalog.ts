@@ -161,7 +161,13 @@ function toMetas(list: Media[]): Meta[] {
 function list(
   args: string,
   page: number,
-  opts: { perPage?: number; extra?: string; keep?: (m: Media) => boolean; sfw?: boolean } = {},
+  opts: {
+    perPage?: number;
+    extra?: string;
+    keep?: (m: Media) => boolean;
+    order?: (media: Media[]) => Media[];
+    sfw?: boolean;
+  } = {},
 ): Promise<Meta[]> {
   const perPage = opts.perPage ?? 25;
   const adult = opts.sfw || adultContentHidden() ? "isAdult:false," : "";
@@ -172,7 +178,8 @@ function list(
   if (running) return running;
   const p = ask({ args: adult + args, page, perPage, extra: opts.extra })
     .then((media) => {
-      const metas = toMetas(opts.keep ? media.filter(opts.keep) : media);
+      const kept = opts.keep ? media.filter(opts.keep) : media;
+      const metas = toMetas(opts.order ? opts.order(kept) : kept);
       // An empty answer isn't kept: the next visit asks again.
       if (metas.length > 0) cache.set(key, { metas, t: Date.now() });
       return metas;
@@ -246,6 +253,15 @@ export function animeHiddenGems(page = 1): Promise<Meta[]> {
   });
 }
 
+/** A name compared loosely: case, apostrophes and punctuation don't count. */
+function nameKey(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[’‘`]/g, "'")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
 /**
  * The anime a title names, best match first ([] when there's none). Throws when AniList can't be
  * asked, so a caller can tell "no such anime" from "ask again later".
@@ -253,5 +269,113 @@ export function animeHiddenGems(page = 1): Promise<Meta[]> {
 export function animeSearchByTitle(title: string, limit = 1): Promise<Meta[]> {
   const q = title.trim();
   if (!q) return Promise.resolve([]);
-  return list(`search:${JSON.stringify(q)},sort:[SEARCH_MATCH]`, 1, { perPage: Math.max(1, Math.min(limit, 10)) });
+  // A few more than asked for, then the best first: AniList's own first match is sometimes a
+  // special or a later season. A title named exactly as asked comes first, then series and films
+  // before specials; a franchise's seasons collapse into its first one.
+  const want = Math.max(1, Math.min(limit, 10));
+  const key = nameKey(q);
+  const order = (media: Media[]) =>
+    media
+      .map((m, i) => {
+        const exact = [m.title.english, m.title.romaji, m.title.userPreferred].some((t) => t && nameKey(t) === key);
+        const main = m.format === "TV" || m.format === "MOVIE" || m.format === "TV_SHORT";
+        return { m, rank: (exact ? 0 : 2) + (main ? 0 : 1), i };
+      })
+      .sort((a, b) => a.rank - b.rank || a.i - b.i)
+      .map((x) => x.m);
+  return list(`search:${JSON.stringify(q)},sort:[SEARCH_MATCH]`, 1, { perPage: Math.max(5, want), order }).then((m) =>
+    m.slice(0, want),
+  );
+}
+
+/** The MyAnimeList number of the anime a title names (null when there's none); throws offline. */
+export async function animeMalIdByTitle(title: string): Promise<number | null> {
+  const metas = await animeSearchByTitle(title, 1);
+  const id = metas[0]?.id;
+  return id?.startsWith("mal:") ? Number(id.slice(4)) || null : null;
+}
+
+/** What other screens need to know about one anime, by its MyAnimeList number. */
+export type AnimeFacts = { titles: string[]; year?: number; score?: string };
+
+type FactsMedia = {
+  idMal: number | null;
+  title: { romaji: string | null; english: string | null; native: string | null };
+  synonyms: string[] | null;
+  seasonYear: number | null;
+  startDate: { year: number | null } | null;
+  averageScore: number | null;
+};
+
+const factsCache = new Map<number, AnimeFacts | null>();
+const factsWaiting = new Map<number, Array<{ resolve: (f: AnimeFacts | null) => void; reject: (e: unknown) => void }>>();
+let factsTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushFacts() {
+  factsTimer = null;
+  const ids = [...factsWaiting.keys()].slice(0, 50);
+  const waiting = ids.map((id) => [id, factsWaiting.get(id) ?? []] as const);
+  for (const id of ids) factsWaiting.delete(id);
+  if (factsWaiting.size > 0) factsTimer = setTimeout(flushFacts, 0);
+  const query =
+    `query{Page(perPage:50){media(type:ANIME,idMal_in:[${ids.join(",")}]){` +
+    "idMal title{romaji english native} synonyms seasonYear startDate{year} averageScore}}}";
+  anilistRequest<{ Page: { media: FactsMedia[] | null } | null }>(query)
+    .then((data) => {
+      const byId = new Map<number, FactsMedia>();
+      for (const m of data?.Page?.media ?? []) if (m.idMal != null) byId.set(m.idMal, m);
+      for (const [id, ws] of waiting) {
+        const m = byId.get(id);
+        const facts: AnimeFacts | null = m
+          ? {
+              titles: [m.title.english, m.title.romaji, ...(m.synonyms ?? []), m.title.native].filter(
+                (t): t is string => !!t,
+              ),
+              year: m.seasonYear ?? m.startDate?.year ?? undefined,
+              score: m.averageScore ? (m.averageScore / 10).toFixed(1) : undefined,
+            }
+          : null;
+        factsCache.set(id, facts);
+        for (const w of ws) w.resolve(facts);
+      }
+    })
+    .catch((e) => {
+      for (const [, ws] of waiting) for (const w of ws) w.reject(e);
+    });
+}
+
+/**
+ * An anime's names, year and AniList score, by its MyAnimeList number (null when AniList doesn't
+ * have it). Asks made together go as one request. Throws when AniList can't be asked.
+ */
+export function animeFactsByMalId(malId: number): Promise<AnimeFacts | null> {
+  if (factsCache.has(malId)) return Promise.resolve(factsCache.get(malId) ?? null);
+  return new Promise((resolve, reject) => {
+    const ws = factsWaiting.get(malId);
+    if (ws) ws.push({ resolve, reject });
+    else factsWaiting.set(malId, [{ resolve, reject }]);
+    if (factsTimer == null) factsTimer = setTimeout(flushFacts, 30);
+  });
+}
+
+/**
+ * What AniList's members recommend after an anime (by its MyAnimeList number), best first; []
+ * when AniList doesn't know it. Throws when AniList can't be asked.
+ */
+export async function animeRecommendationsForMalId(malId: number): Promise<Meta[]> {
+  const query =
+    `query{Media(idMal:${malId},type:ANIME){recommendations(sort:[RATING_DESC],perPage:12){nodes{` +
+    `mediaRecommendation{${FIELDS}}}}}}`;
+  try {
+    const data = await anilistRequest<{
+      Media: { recommendations: { nodes: Array<{ mediaRecommendation: Media | null }> | null } | null } | null;
+    }>(query);
+    const media = (data?.Media?.recommendations?.nodes ?? [])
+      .map((n) => n.mediaRecommendation)
+      .filter((m): m is Media => !!m);
+    return toMetas(media);
+  } catch (e) {
+    if ((e as { status?: number }).status === 404) return [];
+    throw e;
+  }
 }

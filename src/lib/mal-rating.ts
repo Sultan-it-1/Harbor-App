@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import type { Meta } from "@/lib/cinemeta";
+import { animeFactsByMalId } from "@/lib/anilist/catalog";
 import { kitsuToMal } from "@/lib/providers/anime-mapping";
 
-const JIKAN = "https://api.jikan.moe/v4";
 const CACHE_KEY = "harbor.malscorecache";
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -24,7 +24,7 @@ function writeCache(c: ScoreCache) {
   } catch {}
 }
 
-async function jikanScore(malId: number): Promise<string | null> {
+async function animeScore(malId: number): Promise<string | null> {
   const cache = readCache();
   const hit = cache[malId];
   if (hit && Date.now() - hit.t < TTL_MS) return hit.score;
@@ -32,10 +32,8 @@ async function jikanScore(malId: number): Promise<string | null> {
   if (existing) return existing;
   const p = (async () => {
     try {
-      const r = await fetch(`${JIKAN}/anime/${malId}`);
-      if (!r.ok) return null;
-      const j = (await r.json()) as { data?: { score?: number } };
-      const score = typeof j?.data?.score === "number" && j.data.score > 0 ? j.data.score.toFixed(1) : null;
+      // AniList's score (Jikan, MyAnimeList's, closed on 1 Oct 2026).
+      const score = (await animeFactsByMalId(malId))?.score ?? null;
       const c = readCache();
       c[malId] = { score, t: Date.now() };
       writeCache(c);
@@ -73,7 +71,7 @@ export function useMalRating(meta: Meta | undefined): string | undefined {
     void resolveMalId(id)
       .then((malId) => {
         if (cancelled || !malId) return;
-        return jikanScore(malId).then((s) => {
+        return animeScore(malId).then((s) => {
           if (!cancelled && s) setScore(s);
         });
       })
