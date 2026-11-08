@@ -43,7 +43,7 @@ export function AddListForm({
           value={ref}
           onChange={(e) => setRef(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
-          placeholder={t("Paste a Trakt, MDBList, TMDB, Letterboxd, IMDb, or MAL list URL")}
+          placeholder={t("Paste a Trakt, MDBList, TMDB, Letterboxd, IMDb, or AniList list URL")}
           spellCheck={false}
           className="h-10 rounded-lg border border-edge-soft/70 bg-canvas px-3 font-mono text-[11.5px] text-ink placeholder:text-ink-subtle focus:border-edge focus:outline-none"
         />

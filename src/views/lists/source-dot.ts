@@ -7,4 +7,5 @@ export const SOURCE_DOT: Record<ListSource, string> = {
   letterboxd: "bg-accent",
   imdb: "bg-accent",
   mal: "bg-ink",
+  anilist: "bg-[#02a9ff]",
 };

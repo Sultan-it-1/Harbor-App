@@ -55,6 +55,11 @@ function detectUrl(input: string, h: string): DetectResult | null {
     if (user) return { source: "imdb", ref: user[1] };
     return null;
   }
+  if (h === "anilist.co" || h.endsWith(".anilist.co")) {
+    const user = p.match(/\/user\/([^/?#]+)/i);
+    if (user) return { source: "anilist", ref: decodeURIComponent(user[1]) };
+    return null;
+  }
   if (h === "myanimelist.net" || h.endsWith(".myanimelist.net")) {
     const profile = p.match(/\/(?:profile|animelist)\/([^/?#]+)/i);
     if (profile) return { source: "mal", ref: profile[1] };

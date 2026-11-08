@@ -5,6 +5,7 @@ import { resolveTmdb } from "./sources/tmdb";
 import { resolveLetterboxd } from "./sources/letterboxd";
 import { resolveImdb } from "./sources/imdb";
 import { resolveMal } from "./sources/mal";
+import { resolveAnilist } from "./sources/anilist";
 
 const CAP = 500;
 
@@ -40,6 +41,9 @@ export async function resolveList(list: CustomList, keys: ListKeys): Promise<Res
       break;
     case "mal":
       items = await resolveMal(list.ref);
+      break;
+    case "anilist":
+      items = await resolveAnilist(list.ref);
       break;
   }
   return { items: dedupe(items) };

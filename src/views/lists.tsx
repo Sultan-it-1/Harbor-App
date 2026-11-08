@@ -111,6 +111,8 @@ function errorText(error: ListResolveError, t: (key: string, vars?: Record<strin
       return t("This list needs your {key} API key. Add it in Settings, then refresh.", { key: keyLabel(error.source) });
     case "not-found":
       return t("That list is private or doesn't exist. Public lists only.");
+    case "mal-closed":
+      return t("MyAnimeList lists can't be read any more (the service Harbor read them through has closed). Import your list into AniList (anilist.co → Settings → Import Lists), then add your AniList profile link here.");
     default:
       return t("Couldn't load this list. Check the URL and try again.");
   }

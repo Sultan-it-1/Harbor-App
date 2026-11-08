@@ -9,10 +9,12 @@ const lists: Record<string, string> = {
   "{source} list detected": "تم اكتشاف قائمة {source}",
   "We'll name it from the URL.": "سنسمّيها من الرابط.",
   "Keep typing, or paste the full list URL.": "تابع الكتابة، أو الصق رابط القائمة الكامل.",
-  "Paste a Trakt, MDBList, TMDB, Letterboxd, IMDb, or MAL list URL":
-    "الصق رابط قائمة من Trakt أو MDBList أو TMDB أو Letterboxd أو IMDb أو MAL",
-  "Paste a public list from Trakt, MDBList, TMDB, Letterboxd, IMDb, or MyAnimeList. Harbor pulls the titles in and keeps the artwork sharp.":
-    "الصق قائمة عامة من Trakt أو MDBList أو TMDB أو Letterboxd أو IMDb أو MyAnimeList. يجلب Harbor العناوين ويبقي الصور حادّة.",
+  "Paste a Trakt, MDBList, TMDB, Letterboxd, IMDb, or AniList list URL":
+    "الصق رابط قائمة من Trakt أو MDBList أو TMDB أو Letterboxd أو IMDb أو AniList",
+  "Paste a public list from Trakt, MDBList, TMDB, Letterboxd, IMDb, or AniList. Harbor pulls the titles in and keeps the artwork sharp.":
+    "الصق قائمة عامة من Trakt أو MDBList أو TMDB أو Letterboxd أو IMDb أو AniList. يجلب Harbor العناوين ويبقي الصور حادّة.",
+  "MyAnimeList lists can't be read any more (the service Harbor read them through has closed). Import your list into AniList (anilist.co → Settings → Import Lists), then add your AniList profile link here.":
+    "ما عاد يمكن قراءة قوائم MyAnimeList (الخدمة التي كان Harbor يقرؤها عبرها أُغلقت). استورد قائمتك إلى AniList (anilist.co ← Settings ← Import Lists)، ثم أضف رابط ملفك في AniList هنا.",
 
   "Every collection": "كل المجموعات",
   "Every saga in one place. Search anything: if it exists, it's here.":

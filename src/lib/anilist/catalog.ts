@@ -379,3 +379,48 @@ export async function animeRecommendationsForMalId(malId: number): Promise<Meta[
     throw e;
   }
 }
+
+/** One anime by its MyAnimeList number, as a card ([] when AniList doesn't have it). */
+export function animeByMalId(malId: number): Promise<Meta[]> {
+  return list(`idMal:${Math.trunc(malId)}`, 1, { perPage: 1 });
+}
+
+/** The order a user's list is shown in: what they're watching first, what they dropped last. */
+const LIST_ORDER = ["CURRENT", "REPEATING", "PLANNING", "PAUSED", "COMPLETED", "DROPPED"];
+
+/**
+ * A user's public anime list on AniList (watching, planning, finished…), every title once.
+ * Throws AniList's error (with its HTTP `status`: 404 for no such user or a private list) or a
+ * network error.
+ */
+export async function animeListOfUser(userName: string): Promise<Meta[]> {
+  const query =
+    "query($u:String){MediaListCollection(userName:$u,type:ANIME){lists{status isCustomList entries{media{" +
+    FIELDS +
+    "}}}}}";
+  const data = await anilistRequest<{
+    MediaListCollection: {
+      lists: Array<{ status: string | null; isCustomList: boolean | null; entries: Array<{ media: Media | null }> | null }> | null;
+    } | null;
+  }>(query, { u: userName });
+  const lists = (data?.MediaListCollection?.lists ?? []).filter((l) => !l.isCustomList);
+  const rank = (s: string | null) => {
+    const i = LIST_ORDER.indexOf(s ?? "");
+    return i < 0 ? LIST_ORDER.length : i;
+  };
+  lists.sort((a, b) => rank(a.status) - rank(b.status));
+  const hideAdult = adultContentHidden();
+  const out: Meta[] = [];
+  const seen = new Set<string>();
+  for (const l of lists) {
+    for (const e of l.entries ?? []) {
+      const m = e.media;
+      if (!m || !nameOf(m) || (hideAdult && m.isAdult)) continue;
+      const meta = toMeta(m);
+      if (seen.has(meta.id)) continue;
+      seen.add(meta.id);
+      out.push(meta);
+    }
+  }
+  return out;
+}
