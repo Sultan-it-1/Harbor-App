@@ -1,14 +1,15 @@
 import { BookOpen, Check, Copy, Download, Loader2, Power, Radio, ShieldCheck, Wifi, X } from "lucide-react";
 import { useState } from "react";
 import cloudflareLogo from "@/assets/cloudflare.webp";
-import { deleteRelay } from "@/lib/together/cf-deploy";
+import { canDeployRelay, deleteRelay } from "@/lib/together/cf-deploy";
 import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
 import { downloadText } from "@/lib/download-text";
 import { useRelayHealth } from "./relay-panel/use-relay-health";
 import { isRetiredRelay } from "@/lib/together/relay-version";
 
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+// The desktop app and the Android app deploy a relay themselves; a browser can't.
+const isTauri = canDeployRelay();
 
 function isCloudflareRelay(url: string): boolean {
   return /workers\.dev|cloudflare/i.test(url);

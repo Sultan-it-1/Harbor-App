@@ -1,4 +1,5 @@
 import { Check, Copy, LogOut, MousePointer2, Plus } from "lucide-react";
+import { canDeployRelay } from "@/lib/together/cf-deploy";
 import { useEffect, useMemo, useState } from "react";
 import type { Meta } from "@/lib/cinemeta";
 import { useSettings } from "@/lib/settings";
@@ -122,7 +123,7 @@ export function TogetherPopover({
       role="dialog"
       aria-modal="true"
       aria-label={t("Watch together")}
-      className={`harbor-together-surface flex max-h-[80vh] w-[400px] flex-col gap-4 overflow-y-auto border border-edge p-5 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.7)] animate-popover-in ${
+      className={`harbor-together-surface flex max-h-[80vh] w-[min(400px,calc(100vw-32px))] flex-col gap-4 overflow-y-auto border border-edge p-5 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.7)] animate-popover-in ${
         connectStyle === "tab"
           ? placement === "above-left"
             ? "rounded-t-2xl rounded-b-none"
@@ -172,7 +173,7 @@ export function TogetherPopover({
           <div>
             <p className="text-[13px] text-ink">{t("Watch Together needs a relay.")}</p>
             <p className="mt-1 text-[12px] leading-relaxed text-ink-muted">
-              {"__TAURI_INTERNALS__" in window
+              {canDeployRelay()
                 ? t(
                     "A relay is a tiny Cloudflare Worker that passes play/pause/seek messages between you and your friends. No video data ever touches it. Deploy your own in one click (free tier is plenty), or paste a friend's invite link to use theirs.",
                   )
