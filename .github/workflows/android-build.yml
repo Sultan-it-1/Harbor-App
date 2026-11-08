@@ -69,8 +69,10 @@ jobs:
       - name: Build APK
         working-directory: android
         env:
-          # The release key: the .p12 as base64 and its password, both repository secrets.
-          HARBOR_KEYSTORE_BASE64: ${{ secrets.HARBOR_KEYSTORE_BASE64 }}
+          # The release key: the .p12 as base64 and its password, both repository secrets. The base64
+          # may be split over HARBOR_KEYSTORE_BASE64, _2 and _3 (a phone pastes 2000 characters at a
+          # time); the parts are joined in that order.
+          HARBOR_KEYSTORE_BASE64: ${{ secrets.HARBOR_KEYSTORE_BASE64 }}${{ secrets.HARBOR_KEYSTORE_BASE64_2 }}${{ secrets.HARBOR_KEYSTORE_BASE64_3 }}
           HARBOR_KEYSTORE_PASSWORD: ${{ secrets.HARBOR_KEYSTORE_PASSWORD }}
         run: |
           # A debug-signed APK can't update the installed app (Android refuses another key), so
@@ -86,7 +88,7 @@ jobs:
           # the Harbor release key, and the password must open it.
           KEY_SHA=$(sha256sum "$HARBOR_KEYSTORE_PATH" | cut -d' ' -f1)
           if [ "$KEY_SHA" != "${{ vars.HARBOR_KEY_FILE_SHA256 || '46c398a315b18907be0b17384a36ec75031e1236e92091def84e0a511d859957' }}" ]; then
-            echo "::error::HARBOR_KEYSTORE_BASE64 isn't the Harbor key file (it decodes to $(stat -c %s "$HARBOR_KEYSTORE_PATH") bytes, sha256 $KEY_SHA). Paste the whole file's text again."
+            echo "::error::HARBOR_KEYSTORE_BASE64 (with _2 and _3) isn't the Harbor key file: it decodes to $(stat -c %s "$HARBOR_KEYSTORE_PATH") bytes of 4296 (sha256 $KEY_SHA). A part is missing or cut short."
             exit 1
           fi
           if ! keytool -list -keystore "$HARBOR_KEYSTORE_PATH" -storetype pkcs12 -storepass:env HARBOR_KEYSTORE_PASSWORD > /dev/null 2>&1; then
