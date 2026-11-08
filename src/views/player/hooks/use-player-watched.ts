@@ -2,7 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { Meta } from "@/lib/cinemeta";
 import { getEpisodeProgress } from "@/lib/episode-progress";
 import { manualWatchedVersion, subscribeManualWatched } from "@/lib/manual-watched";
-import { loadSimklWatchedMap, simklWatchedForId } from "@/lib/simkl/list-status";
+import { loadSimklWatchedMap, simklWatchedForId, useSimklListVersion } from "@/lib/simkl/list-status";
 import { useSimkl } from "@/lib/simkl/provider";
 import { resolveMeta } from "@/lib/meta-resource";
 import { libraryGetOne } from "@/lib/stremio";
@@ -26,6 +26,8 @@ export function usePlayerWatched(params: {
   // This show's every watched episode on Trakt, with the account-wide set.
   const traktWatched = useTraktShowWatched(traktWatchedAll, enabled && traktConnected, meta.id, imdbId);
   const [simklWatched, setSimklWatched] = useState<Set<string>>(() => new Set());
+  // Bumped when Simkl's list was read again with something new (watched elsewhere).
+  const simklVersion = useSimklListVersion();
   const [stremioWatched, setStremioWatched] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
@@ -52,7 +54,7 @@ export function usePlayerWatched(params: {
     return () => {
       cancelled = true;
     };
-  }, [enabled, simklConnected, meta.id, imdbId]);
+  }, [enabled, simklConnected, meta.id, imdbId, simklVersion]);
 
   useEffect(() => {
     if (!enabled || !authKey) return;

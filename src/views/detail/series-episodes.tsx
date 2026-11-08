@@ -15,7 +15,7 @@ import { spoilerMaskFor } from "@/lib/spoilers";
 import { fetchWatchedKeySet } from "@/lib/trakt/history";
 import { useTraktShowWatched } from "@/lib/trakt/use-show-watched";
 import { useTrakt } from "@/lib/trakt/provider";
-import { loadSimklWatchedMap, simklWatchedForId } from "@/lib/simkl/list-status";
+import { loadSimklWatchedMap, simklWatchedForId, useSimklListVersion } from "@/lib/simkl/list-status";
 import { markEpisodesWatched, unmarkEpisodeWatched } from "@/lib/simkl/history";
 import { stremioIdToSimklTarget } from "@/lib/simkl/ids";
 import { useSimkl } from "@/lib/simkl/provider";
@@ -85,6 +85,8 @@ export function SeriesEpisodes({
   const [loading, setLoading] = useState(true);
   const [traktWatchedAll, setTraktWatched] = useState<Set<string>>(() => new Set());
   const [simklWatched, setSimklWatched] = useState<Set<string>>(() => new Set());
+  // Bumped when Simkl's list was read again with something new (watched elsewhere).
+  const simklVersion = useSimklListVersion();
   const cache = useRef<Map<number, Episode[]>>(new Map());
 
   useEffect(() => {
@@ -117,7 +119,7 @@ export function SeriesEpisodes({
     return () => {
       cancelled = true;
     };
-  }, [simklConnected, imdbId, meta.id]);
+  }, [simklConnected, imdbId, meta.id, simklVersion]);
 
   const traktKey = imdbId ?? meta.id;
   // This show's every watched episode on Trakt, with the account-wide set.

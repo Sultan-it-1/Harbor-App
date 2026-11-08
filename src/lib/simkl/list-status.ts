@@ -1,5 +1,6 @@
+import { useSyncExternalStore } from "react";
 import { simklRequest } from "./client";
-import { subscribeSession } from "./session";
+import { getSession, subscribeSession } from "./session";
 import type { SimklTarget } from "./types";
 
 export type WatchlistStatus = "watching" | "plantowatch" | "hold" | "completed" | "dropped";
@@ -65,15 +66,45 @@ function targetKeys(target: SimklTarget): string[] {
 }
 
 let cache: Promise<SimklData> | null = null;
+/** Simkl's "last changed" for the account when the list in [cache] was read. */
+let pulledStamp: string | null = null;
+let lastCheck = 0;
+let checking: Promise<void> | null = null;
+let version = 0;
+const listeners = new Set<() => void>();
+
+/** How often, at most, Harbor asks Simkl whether anything changed. */
+const CHECK_EVERY_MS = 2 * 60_000;
 
 subscribeSession(() => {
   cache = null;
+  pulledStamp = null;
 });
 
+/** When anything last changed on the account (a small request); null when Simkl can't be asked. */
+async function activityStamp(): Promise<string | null> {
+  try {
+    const a = await simklRequest<Record<string, unknown> | null>("/sync/activities");
+    if (!a) return null;
+    return typeof a.all === "string" ? a.all : JSON.stringify(a);
+  } catch {
+    return null;
+  }
+}
+
 async function pull(): Promise<SimklData> {
-  const data = await simklRequest<RawAllItems>(
-    "/sync/all-items/all/all?extended=full&episode_watched_at=yes",
-  ).catch(() => ({}) as RawAllItems);
+  const [data, stamp] = await Promise.all([
+    simklRequest<RawAllItems>("/sync/all-items/all/all?extended=full&episode_watched_at=yes").catch(
+      () => null,
+    ),
+    activityStamp(),
+  ]);
+  // A list that couldn't be read leaves no stamp, so the next check reads it again.
+  pulledStamp = data ? stamp : null;
+  return build(data ?? ({} as RawAllItems));
+}
+
+function build(data: RawAllItems): SimklData {
   const statuses = new Map<string, WatchlistStatus>();
   const watched = new Map<string, Set<string>>();
   const add = (entries: RawEntry[] | undefined, kind: "movie" | "show") => {
@@ -102,8 +133,61 @@ async function pull(): Promise<SimklData> {
 }
 
 function loadData(): Promise<SimklData> {
-  if (!cache) cache = pull();
+  if (!cache) {
+    cache = pull();
+    lastCheck = Date.now();
+    return cache;
+  }
+  // What's kept is shown at once; a check for changes runs behind it.
+  void checkSimklForChanges();
   return cache;
+}
+
+/**
+ * Asks Simkl whether anything changed on the account since its list was read (at most every two
+ * minutes, unless [force]); when it did, reads the list again and tells the screens that show it.
+ * Simkl counts each request against a daily allowance, so the whole list is only read again when
+ * something changed.
+ */
+export function checkSimklForChanges(force = false): Promise<void> {
+  if (!cache || !getSession()) return Promise.resolve();
+  if (checking) return checking;
+  if (!force && Date.now() - lastCheck < CHECK_EVERY_MS) return Promise.resolve();
+  lastCheck = Date.now();
+  checking = (async () => {
+    const stamp = await activityStamp();
+    if (stamp == null || (stamp === pulledStamp && pulledStamp != null)) return;
+    const next = pull();
+    await next;
+    cache = next;
+    version++;
+    for (const fn of listeners) fn();
+  })().finally(() => {
+    checking = null;
+  });
+  return checking;
+}
+
+/** Changes whenever Simkl's list was read again with something new (re-read what it shows). */
+export function useSimklListVersion(): number {
+  return useSyncExternalStore(
+    (fn) => {
+      listeners.add(fn);
+      return () => {
+        listeners.delete(fn);
+      };
+    },
+    () => version,
+    () => version,
+  );
+}
+
+// Back in the app (Android) or back on the tab (web): anything watched elsewhere meanwhile.
+if (typeof window !== "undefined") {
+  window.addEventListener("harbor:resume", () => void checkSimklForChanges());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void checkSimklForChanges();
+  });
 }
 
 export async function loadSimklStatusMap(): Promise<Map<string, WatchlistStatus>> {
