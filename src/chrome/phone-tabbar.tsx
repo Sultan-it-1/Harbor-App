@@ -55,7 +55,7 @@ export function PhoneTabBar() {
   const [moreOpen, setMoreOpen] = useState(false);
   // A new version of the app: a dot on More and on Settings (the update is on the Settings page).
   const update = useAndroidUpdate();
-  const updateWaiting = update.status === "available" || update.status === "permission";
+  const updateWaiting = update.status === "available";
   useEffect(() => {
     const id = window.setTimeout(() => void checkAndroidUpdate(false), 8000);
     return () => window.clearTimeout(id);

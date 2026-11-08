@@ -65,7 +65,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
     private lateinit var player: NativePlayer
     private lateinit var fetcher: NativeFetch
-    private lateinit var updater: AppUpdater
     private lateinit var downloads: Downloads
     private lateinit var images: ImageCache
     private lateinit var nativeImages: NativeImages
@@ -152,7 +151,6 @@ class MainActivity : ComponentActivity() {
         RefreshRate.apply(this)
 
         fetcher = NativeFetch { id, result -> sendToJs("__harborNativeFetchDone", id, result) }
-        updater = AppUpdater(this) { json -> sendToJs("__harborUpdateEvent", json) }
         downloads = Downloads.get(this)
         DownloadService.createChannel(this)
         pendingOpenDownloads = intent?.getBooleanExtra(EXTRA_OPEN_DOWNLOADS, false) == true
@@ -651,27 +649,6 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface
         fun fetch(t: String, id: String, requestJson: String) {
             if (ok(t)) guard("fetch", Unit) { fetcher.enqueue(id, requestJson) }
-        }
-
-        /** In-app updates (AppUpdater): may Harbor open Android's installer? */
-        @JavascriptInterface
-        fun updateCanInstall(t: String): Boolean = ok(t) && guard("updateCanInstall", false) { updater.canInstall() }
-
-        /** Opens Android's "Install unknown apps" switch for Harbor. */
-        @JavascriptInterface
-        fun updateAllowInstall(t: String) {
-            if (ok(t)) onUi("updateAllowInstall") { updater.openInstallPermission() }
-        }
-
-        /** Downloads the release APK at [url], checks its SHA-256, and opens the installer. */
-        @JavascriptInterface
-        fun updateDownload(t: String, url: String, sha256: String) {
-            if (ok(t)) guard("updateDownload", Unit) { updater.download(url, sha256) }
-        }
-
-        @JavascriptInterface
-        fun updateCancel(t: String) {
-            if (ok(t)) guard("updateCancel", Unit) { updater.cancel() }
         }
 
         @JavascriptInterface

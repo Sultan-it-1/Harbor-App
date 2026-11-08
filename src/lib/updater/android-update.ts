@@ -1,7 +1,7 @@
 /**
- * In-app updates for the Android app: the latest release of the app's repository on GitHub,
- * compared with the installed version; the shell (android/…/AppUpdater.kt) downloads the APK,
- * checks its SHA-256 and opens Android's installer.
+ * Updates for the Android app: the latest release of the app's repository on GitHub, compared
+ * with the installed version. The update itself downloads in the browser and installs from
+ * there, as a first install does: an app that installs APKs itself gets flagged by Play Protect.
  */
 import { useSyncExternalStore } from "react";
 import { androidApi, androidFetch } from "@/lib/android";
@@ -10,7 +10,7 @@ import { androidApi, androidFetch } from "@/lib/android";
 export const RELEASES_REPO = "Sultan-it-1/Harbor-App";
 
 export type AndroidUpdateState = {
-  status: "idle" | "checking" | "uptodate" | "available" | "permission" | "downloading" | "installing" | "error";
+  status: "idle" | "checking" | "uptodate" | "available" | "error";
   /** The installed version ("1.0.7"). */
   current: string;
   /** The latest release's version, once known. */
@@ -20,8 +20,6 @@ export type AndroidUpdateState = {
   url: string | null;
   sha256: string | null;
   size: number | null;
-  received: number;
-  total: number;
   error: string | null;
 };
 
@@ -47,8 +45,6 @@ let state: AndroidUpdateState = {
   url: null,
   sha256: null,
   size: null,
-  received: 0,
-  total: 0,
   error: null,
 };
 const listeners = new Set<() => void>();
@@ -136,7 +132,7 @@ async function latestRelease(): Promise<Release> {
  */
 export async function checkAndroidUpdate(manual = false): Promise<void> {
   if (!androidApi()) return;
-  if (state.status === "checking" || state.status === "downloading" || state.status === "installing") return;
+  if (state.status === "checking") return;
   if (!manual) {
     try {
       const last = Number(localStorage.getItem(LAST_CHECK_KEY) || 0);
@@ -180,42 +176,9 @@ export async function checkAndroidUpdate(manual = false): Promise<void> {
   }
 }
 
-/** Downloads the new version and opens Android's installer (first asking for the permission). */
+/** The new version's APK, downloaded by the browser (Android then offers to install it). */
 export function startAndroidUpdate(): void {
   const api = androidApi();
   if (!api || !state.url) return;
-  if (api.updateCanInstall && !api.updateCanInstall()) {
-    set({ status: "permission" });
-    api.updateAllowInstall?.();
-    return;
-  }
-  set({ status: "downloading", received: 0, total: state.size ?? 0, error: null });
-  api.updateDownload?.(state.url, state.sha256 ?? "");
-}
-
-export function cancelAndroidUpdate(): void {
-  androidApi()?.updateCancel?.();
-  set({ status: "available", received: 0 });
-}
-
-if (typeof window !== "undefined") {
-  window.__harborUpdateEvent = (json: string) => {
-    let e: { type?: string; received?: number; total?: number; message?: string };
-    try {
-      e = JSON.parse(json);
-    } catch {
-      return;
-    }
-    if (e.type === "progress") set({ status: "downloading", received: e.received ?? 0, total: e.total && e.total > 0 ? e.total : state.total });
-    else if (e.type === "installing") set({ status: "installing" });
-    else if (e.type === "cancelled") set({ status: "available", received: 0 });
-    else if (e.type === "error") set({ status: "error", error: e.message ?? null });
-  };
-  // Back from Android's "Install unknown apps" switch: carry on if it's now allowed; back from
-  // the installer without installing: the update can be started again.
-  window.addEventListener("harbor:resume", () => {
-    const api = androidApi();
-    if (state.status === "permission" && api?.updateCanInstall?.()) startAndroidUpdate();
-    else if (state.status === "installing") set({ status: "available" });
-  });
+  api.openExternal(state.url);
 }

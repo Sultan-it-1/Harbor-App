@@ -1832,10 +1832,8 @@ const settings: Record<string, string> = {
   "Couldn't check for updates.": "تعذّر التحقق من التحديثات.",
   "You have {version}.": "لديك الإصدار {version}.",
   "What's new": "ما الجديد",
-  "Allow Harbor to install updates (Android asks once), then come back: the update starts by itself.":
-    "اسمح لـ Harbor بتثبيت التحديثات (يطلبها أندرويد مرة واحدة)، ثم ارجع: يبدأ التحديث تلقائيًا.",
-  "Downloading… {pct}%": "جارٍ التنزيل… {pct}%",
-  "Opening the installer… Tap Update there.": "جارٍ فتح المثبّت… اضغط «تحديث» هناك.",
+  "The download opens in your browser. When it's done, open it to install the new version over this one.":
+    "يُفتح التنزيل في المتصفح. عند انتهائه افتحه لتثبيت الإصدار الجديد فوق هذا.",
 };
 
 export default settings;

@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- The downloaded update (AppUpdater), shared with Android's installer only. -->
-<paths>
-    <cache-path name="updates" path="updates/" />
-</paths>

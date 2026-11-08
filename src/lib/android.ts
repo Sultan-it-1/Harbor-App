@@ -47,12 +47,6 @@ type HarborAndroidApi = {
   imageCache?(): string;
   /** Empties them (and the WebView's own cache); answers like imageCache. */
   imageCacheClear?(): string;
-  /** In-app updates (android/…/AppUpdater.kt): may Harbor open Android's installer; the
-   *  "Install unknown apps" switch; download + check + install (events on __harborUpdateEvent). */
-  updateCanInstall?(): boolean;
-  updateAllowInstall?(): void;
-  updateDownload?(url: string, sha256: string): void;
-  updateCancel?(): void;
 };
 
 export type NativePlayerEvent =
@@ -93,8 +87,6 @@ declare global {
     __harborFileSaved?: (id: string, ok: string) => void;
     /** Taps on the native screens (see src/views/native/native-screens.ts). */
     __harborNativeHome?: (json: string) => void;
-    /** How an in-app update goes (see src/lib/updater/android-update.ts). */
-    __harborUpdateEvent?: (json: string) => void;
   }
 }
 
