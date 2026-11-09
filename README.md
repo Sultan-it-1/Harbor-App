@@ -8,7 +8,7 @@ A Stremio client for Android.
 
 <a href="https://github.com/Sultan-it-1/Harbor-App/releases/latest/download/harbor-android.apk"><img alt="Download for Android" src="https://img.shields.io/badge/Download-Android%20APK-3DDC84?style=for-the-badge&logo=android&logoColor=white"></a>
 
-<sub><a href="https://github.com/Sultan-it-1/Harbor-App/releases">All releases</a> · <a href="https://github.com/Sultan-it-1/Harbor-App/issues">Issues</a></sub>
+<sub><a href="docs/GUIDE.md">دليل الاستخدام (Guide)</a> · <a href="https://github.com/Sultan-it-1/Harbor-App/releases">All releases</a> · <a href="https://github.com/Sultan-it-1/Harbor-App/issues">Issues</a></sub>
 
 </div>
 
@@ -27,6 +27,8 @@ A Stremio client for Android.
 2. Open it and allow "install from unknown sources" when asked.
 
 Each release is signed with the same key, so a new version installs over the previous one.
+
+New to Harbor? Read the step-by-step guide (Arabic): [docs/GUIDE.md](docs/GUIDE.md).
 
 ## Development
 
