@@ -1,6 +1,7 @@
 import { ArrowRight, Check, Copy, ExternalLink, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import cfTokenTutorial from "@/assets/cf-token-tutorial.png";
+import cfTokenPermission from "@/assets/cf-token-permission.webp";
+import cfTokenPolicy from "@/assets/cf-token-policy.webp";
 import cloudflareLogoPng from "@/assets/cloudflare.png";
 import { useT } from "@/lib/i18n";
 import { useSettings } from "@/lib/settings";
@@ -130,34 +131,52 @@ export function TogetherDeployModal({ onClose, inline = false }: { onClose: () =
           <div className="flex flex-col gap-4">
             <ol className="flex flex-col gap-3">
               <Step n={1}>
-                {t("Click the button below. It opens Cloudflare's token page in your browser. Sign in (free, takes 30 seconds if you don't have an account).")}
+                {t("Tap the button below. It opens Cloudflare's token page in your browser. Sign in (free, takes 30 seconds if you don't have an account).")}
               </Step>
               <Step n={2}>
-                <Interpolate text={t("On Cloudflare, click {b1}, then find {b2} and click {b3}.")} values={{
-                  b1: <b>{t("Create Token")}</b>,
-                  b2: <b>{t("Create Custom Token")}</b>,
-                  b3: <b>{t("Get started")}</b>,
+                <Interpolate text={t("Tap {b1}. Under {b2}, type any name ({b3} works).")} values={{
+                  b1: <Cf>Create Token</Cf>,
+                  b2: <Cf>Token name</Cf>,
+                  b3: <Cf>Harbor Relay</Cf>,
                 }} />
               </Step>
               <Step n={3}>
-                {t("Fill the top of the form to look exactly like this:")}
-                <img
-                  src={cfTokenTutorial}
-                  alt={t("Cloudflare token form filled with name 'Harbor Relay' and one permission row set to Account / Workers Scripts / Edit")}
-                  className="mt-2 w-full rounded-lg border border-edge"
+                <Interpolate text={t("Under {b1}, tap {b2}, then {b3}:")} values={{
+                  b1: <Cf>Policies</Cf>,
+                  b2: <Cf>Start from scratch</Cf>,
+                  b3: <Cf>Start with an Account policy</Cf>,
+                }} />
+                <TutorialImage
+                  src={cfTokenPolicy}
+                  width={900}
+                  height={594}
+                  alt={t("Cloudflare's Start from scratch card and its menu, with Start with an Account policy highlighted")}
                 />
-                <span className="mt-2 block text-[12px] text-ink-subtle">
-                  <Interpolate text={t("Token name can be anything. The permission row must be exactly {b1} + {b2} + {b3}.")} values={{
-                    b1: <b>{t("Account")}</b>,
-                    b2: <b>{t("Workers Scripts")}</b>,
-                    b3: <b>{t("Edit")}</b>,
-                  }} />
-                </span>
               </Step>
               <Step n={4}>
-                <Interpolate text={t("Leave everything below it alone. Scroll down, click {b1}, then {b2}. Copy the long string it shows you (you only see it once) and bring it back here.")} values={{
-                  b1: <b>{t("Continue to summary")}</b>,
-                  b2: <b>{t("Create Token")}</b>,
+                <Interpolate text={t("In {b1}, type {b2} and tick {b3} next to it. Leave {b4} and {b5} as they are:")} values={{
+                  b1: <Cf>Search for permission</Cf>,
+                  b2: <Cf>Workers Scripts</Cf>,
+                  b3: <Cf>Edit</Cf>,
+                  b4: <Cf>Include</Cf>,
+                  b5: <Cf>All accounts</Cf>,
+                }} />
+                <TutorialImage
+                  src={cfTokenPermission}
+                  width={900}
+                  height={979}
+                  alt={t("Cloudflare's account policy with Workers Scripts searched and its Edit box ticked")}
+                />
+                <span className="mt-2 block text-[12px] text-ink-subtle">
+                  <Interpolate text={t("Only that one box. Leave the boxes under {b1} empty.")} values={{ b1: <Cf>Workers</Cf> }} />
+                </span>
+              </Step>
+              <Step n={5}>
+                <Interpolate text={t("Keep {b1} on {b2}. Scroll down, tap {b3}, then {b4}. Copy the long string it shows you (you only see it once) and bring it back here.")} values={{
+                  b1: <Cf>Token expiration</Cf>,
+                  b2: <Cf>No expiration</Cf>,
+                  b3: <Cf>Continue to summary</Cf>,
+                  b4: <Cf>Create Token</Cf>,
                 }} />
               </Step>
             </ol>
@@ -186,7 +205,7 @@ export function TogetherDeployModal({ onClose, inline = false }: { onClose: () =
                 type="password"
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
-                placeholder={t("40-character token")}
+                placeholder={t("Paste your token here")}
                 autoFocus
                 className="h-11 rounded-xl border border-edge bg-canvas px-3.5 font-mono text-[13px] text-ink transition-colors focus:border-accent"
               />
@@ -329,6 +348,22 @@ export function TogetherDeployModal({ onClose, inline = false }: { onClose: () =
         {body}
       </div>
     </div>
+  );
+}
+
+/** A label on Cloudflare's page, as it reads there (Cloudflare's dashboard is in English). */
+function Cf({ children }: { children: React.ReactNode }) {
+  return <b dir="ltr" className="whitespace-nowrap">{children}</b>;
+}
+
+/** A picture of Cloudflare's page with what to tap ringed in gold. */
+function TutorialImage(props: { src: string; width: number; height: number; alt: string }) {
+  return (
+    <img
+      {...props}
+      loading="lazy"
+      className="mt-2 block h-auto w-full max-w-[360px] rounded-xl border border-edge"
+    />
   );
 }
 
