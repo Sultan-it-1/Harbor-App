@@ -158,6 +158,43 @@ export function TogetherRelayPanel({
                 {testing ? t("Testing…") : t("Run test")}
               </button>
             </div>
+            {testResult && (
+              // Right under the button that ran it (it used to sit at the bottom, out of view on a phone).
+              <div className="px-3 pb-2.5">
+                <div
+                  className={`flex flex-col gap-2 rounded-xl border px-3.5 py-3 ${
+                    testResult.ok
+                      ? "border-accent/40 bg-accent/10"
+                      : "border-danger/40 bg-danger/10"
+                  }`}
+                >
+                  <div className="flex items-start gap-2.5">
+                    <span
+                      className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${
+                        testResult.ok ? "bg-accent/25 text-accent" : "bg-danger/25 text-danger"
+                      }`}
+                    >
+                      {testResult.ok ? <Check size={12} strokeWidth={2.4} /> : <X size={12} strokeWidth={2.4} />}
+                    </span>
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className={`text-[12.5px] font-medium ${testResult.ok ? "text-ink" : "text-danger"}`}>
+                        {testResult.ok ? t("Relay verified end-to-end") : t("Relay test failed")}
+                      </span>
+                      <span className="text-[11.5px] text-ink-subtle">{testResult.message}</span>
+                    </div>
+                  </div>
+                  {testResult.needsUpdate && (
+                    <button
+                      onClick={() => (isManaged ? setShowDeploy(true) : setShowDocs(true))}
+                      className="ms-7 flex h-8 w-fit items-center gap-1.5 rounded-lg bg-ink px-3 text-[11.5px] font-medium text-canvas transition-transform hover:scale-[1.02]"
+                    >
+                      <Power size={12} strokeWidth={2} />
+                      {isManaged ? t("Redeploy relay") : t("Redeploy instructions")}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
             {passive && (
               <>
                 <div className="h-px bg-edge-soft/60" />
@@ -216,41 +253,6 @@ export function TogetherRelayPanel({
               </>
             )}
           </div>
-
-          {testResult && (
-            <div
-              className={`flex flex-col gap-2 rounded-xl border px-3.5 py-3 ${
-                testResult.ok
-                  ? "border-accent/40 bg-accent/10"
-                  : "border-danger/40 bg-danger/10"
-              }`}
-            >
-              <div className="flex items-start gap-2.5">
-                <span
-                  className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${
-                    testResult.ok ? "bg-accent/25 text-accent" : "bg-danger/25 text-danger"
-                  }`}
-                >
-                  {testResult.ok ? <Check size={12} strokeWidth={2.4} /> : <X size={12} strokeWidth={2.4} />}
-                </span>
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className={`text-[12.5px] font-medium ${testResult.ok ? "text-ink" : "text-danger"}`}>
-                    {testResult.ok ? t("Relay verified end-to-end") : t("Relay test failed")}
-                  </span>
-                  <span className="text-[11.5px] text-ink-subtle">{testResult.message}</span>
-                </div>
-              </div>
-              {testResult.needsUpdate && (
-                <button
-                  onClick={() => (isManaged ? setShowDeploy(true) : setShowDocs(true))}
-                  className="ms-7 flex h-8 w-fit items-center gap-1.5 rounded-lg bg-ink px-3 text-[11.5px] font-medium text-canvas transition-transform hover:scale-[1.02]"
-                >
-                  <Power size={12} strokeWidth={2} />
-                  {isManaged ? t("Redeploy relay") : t("Redeploy instructions")}
-                </button>
-              )}
-            </div>
-          )}
 
           {isManaged ? (
             <div className="flex items-center gap-2">

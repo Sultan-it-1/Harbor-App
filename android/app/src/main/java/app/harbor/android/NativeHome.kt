@@ -54,6 +54,8 @@ class NativeHome(
     private val togetherButton = FrameLayout(ctx)
     /** A page opened over another: "Back" at the top (like the page's own pill). */
     private val backButton = LinearLayout(ctx)
+    /** Fades in at the top once the page scrolls, so what scrolls under Back and Watch together doesn't show through them. */
+    private val topScrim = View(ctx)
     /** A full-screen step over everything (the play picker's: connecting, peer-to-peer…). */
     private val stageView = FrameLayout(ctx)
     private val backText = label("", 13.5f, lines = 1)
@@ -67,7 +69,9 @@ class NativeHome(
     private val searchClear = ImageView(ctx)
     private var searchKey: String? = null
     private var searchQuiet = false
-    private val searchSend = Runnable { act("query", text = searchField.text?.toString() ?: "") }
+    /** What the field last told the page: other text from the page was set by the page itself. */
+    private var searchSent = ""
+    private val searchSend = Runnable { sendQuery() }
     private val cardPool = RecyclerView.RecycledViewPool()
     private val rowScroll = HashMap<String, Parcelable?>()
     private val askedMore = HashMap<String, Int>()
@@ -101,6 +105,9 @@ class NativeHome(
         cardPool.setMaxRecycledViews(C_FEATURE, 2)
         cardPool.setMaxRecycledViews(C_LEAD, 2)
         root.addView(list, FrameLayout.LayoutParams(MATCH, MATCH))
+        topScrim.alpha = 0f
+        topScrim.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        root.addView(topScrim, FrameLayout.LayoutParams(MATCH, dp(84), Gravity.TOP))
 
         togetherButton.apply {
             visibility = View.GONE
@@ -145,7 +152,7 @@ class NativeHome(
             searchField.setOnEditorActionListener { v, _, _ ->
                 // Search on the keyboard: what's typed now, then the page's Enter (its top match).
                 root.removeCallbacks(searchSend)
-                act("query", text = searchField.text?.toString() ?: "")
+                sendQuery()
                 act("submit")
                 hideKeyboard(v)
                 true
@@ -177,7 +184,10 @@ class NativeHome(
         stageView.visibility = View.GONE
         root.addView(stageView, FrameLayout.LayoutParams(MATCH, MATCH))
         list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) = placeSearch()
+            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                placeSearch()
+                placeScrim()
+            }
         })
 
         // New width (rotation, split screen): card sizes follow it.
@@ -191,6 +201,11 @@ class NativeHome(
                 if (!first) root.post { sections.notifyDataSetChanged() }
             }
         }
+    }
+
+    /** The top shade: none at the top of the page, full once it has scrolled a little. */
+    private fun placeScrim() {
+        topScrim.alpha = (list.computeVerticalScrollOffset() / dp(64).toFloat()).coerceIn(0f, 1f)
     }
 
     /** A new description of Home from the page. Nothing changed = nothing redrawn. */
@@ -209,6 +224,10 @@ class NativeHome(
             colors = m.colors
             root.layoutDirection = if (m.rtl) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
             root.setBackgroundColor(colors.canvas)
+            topScrim.background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(colors.canvas, withAlpha(colors.canvas, 0.9f), Color.TRANSPARENT),
+            )
             togetherButton.background = rounded(withAlpha(colors.canvas, 0.72f), dp(22).toFloat())
             togetherButton.contentDescription = m.label("together", "Watch together")
             togetherButton.visibility = if (m.showTogether) View.VISIBLE else View.GONE
@@ -230,6 +249,7 @@ class NativeHome(
             if (lastTop != Int.MIN_VALUE && m.top != lastTop) list.scrollToPosition(0)
             lastTop = m.top
             applyVisibility()
+            list.post { placeScrim() }
         } catch (e: Exception) {
             Log.e(TAG, "home model failed to show", e)
             show(false, 0)
@@ -280,6 +300,7 @@ class NativeHome(
         if (q.key != searchKey) {
             searchKey = q.key
             root.removeCallbacks(searchSend)
+            searchSent = q.text
             searchQuiet = true
             searchField.setText(q.text)
             searchField.setSelection(searchField.text?.length ?: 0)
@@ -292,7 +313,22 @@ class NativeHome(
                         ?.showSoftInput(searchField, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
                 }, 150)
             }
+        } else if (q.text != searchSent && q.text != (searchField.text?.toString() ?: "")) {
+            // The page set the text itself (a recent search, Clear): show it. An old echo of what
+            // was typed matches searchSent and leaves the field alone.
+            root.removeCallbacks(searchSend)
+            searchSent = q.text
+            searchQuiet = true
+            searchField.setText(q.text)
+            searchField.setSelection(searchField.text?.length ?: 0)
+            searchQuiet = false
         }
+    }
+
+    private fun sendQuery() {
+        val text = searchField.text?.toString() ?: ""
+        searchSent = text
+        act("query", text = text)
     }
 
     /** The search field under the heading, or held at the top once the heading has scrolled away. */
@@ -7670,22 +7706,30 @@ class NativeHome(
     // ---- small pieces ----------------------------------------------------------------------------
 
     /** IMDb's yellow tag and the score, on a dark pill. */
+    /** The rating badge: "8.1" is IMDb's (yellow IMDb label); "★7.5" is another site's score (a star). */
     private fun imdbBadge(value: String, sizeSp: Float, trailing: Int = dp(14)): View = LinearLayout(ctx).apply {
+        val star = value.startsWith("★")
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPaddingRelative(dp(5), dp(3), dp(7), dp(3))
         background = rounded(withAlpha(colors.canvas, 0.92f), dp(7).toFloat())
         addView(TextView(ctx).apply {
-            text = "IMDb"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp * 0.72f)
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.BLACK)
             includeFontPadding = false
-            setPadding(dp(3), dp(1), dp(3), dp(1))
-            background = rounded(0xFFF5C518.toInt(), dp(2).toFloat())
+            if (star) {
+                text = "★"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
+                setTextColor(0xFFFBBF24.toInt())
+            } else {
+                text = "IMDb"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp * 0.72f)
+                setTextColor(Color.BLACK)
+                setPadding(dp(3), dp(1), dp(3), dp(1))
+                background = rounded(0xFFF5C518.toInt(), dp(2).toFloat())
+            }
         })
         addView(TextView(ctx).apply {
-            text = value
+            text = value.removePrefix("★").trim()
             setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(colors.ink)

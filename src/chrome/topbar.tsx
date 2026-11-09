@@ -1,6 +1,6 @@
 import { isPhoneLayout } from "@/lib/platform";
 import { ArrowLeft, Search, Users } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BackChrome } from "@/chrome/back-chrome";
 import { HarborMark } from "@/components/icons/harbor-mark";
 import { TogetherPopover } from "@/components/together-modal";
@@ -32,6 +32,7 @@ export function Topbar({ connecting = false }: { connecting?: boolean } = {}) {
   const t = useT();
   const preview = useThemePreview();
   const fullscreen = useWindowFullscreen();
+  const scrolled = usePageScrolled(view);
   if (chromeHidden && !connecting) return null;
   const layout = preview ? preview.layout : activeLayout(settings.theme);
   const onLiveRoot = topKind === "live";
@@ -51,6 +52,15 @@ export function Topbar({ connecting = false }: { connecting?: boolean } = {}) {
   const dragProps = IS_TAURI && !fullscreen ? { "data-tauri-drag-region": true } : {};
   return (
     <header className={`fixed inset-x-0 top-0 ${topKind === "picker" || connecting ? "z-[130]" : "z-[55]"} h-20`}>
+      {phone && (
+        // Once the page scrolls, a shade behind Back and Watch together so the page doesn't show through them.
+        <div
+          aria-hidden
+          className={`pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-canvas from-50% to-transparent transition-opacity duration-200 ${
+            scrolled ? "opacity-100" : "opacity-0"
+          }`}
+        />
+      )}
       <div
         {...dragProps}
         className="relative z-10 grid h-full grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 sm:px-8"
@@ -126,6 +136,28 @@ export function Topbar({ connecting = false }: { connecting?: boolean } = {}) {
       </div>
     </header>
   );
+}
+
+/**
+ * Whether the page under the top bar has scrolled down (phone). Pages scroll in their own boxes, so
+ * this listens to every scroll and goes by the tall one that moved; sideways rows don't count.
+ * Starts over on each new page.
+ */
+function usePageScrolled(view: string): boolean {
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    setScrolled(false);
+    if (!isPhoneLayout()) return;
+    const onScroll = (e: Event) => {
+      const el = e.target instanceof HTMLElement ? e.target : document.scrollingElement;
+      if (!(el instanceof HTMLElement)) return;
+      if (el.scrollHeight <= el.clientHeight + 1 || el.clientHeight < window.innerHeight * 0.5) return;
+      setScrolled(el.scrollTop > 24);
+    };
+    document.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => document.removeEventListener("scroll", onScroll, { capture: true });
+  }, [view]);
+  return scrolled;
 }
 
 const TOPBAR_MAX_AVATARS = 3;
