@@ -107,7 +107,7 @@ class NativeHome(
         root.addView(list, FrameLayout.LayoutParams(MATCH, MATCH))
         topScrim.alpha = 0f
         topScrim.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        root.addView(topScrim, FrameLayout.LayoutParams(MATCH, dp(84), Gravity.TOP))
+        root.addView(topScrim, FrameLayout.LayoutParams(MATCH, dp(104), Gravity.TOP))
 
         togetherButton.apply {
             visibility = View.GONE
@@ -226,7 +226,7 @@ class NativeHome(
             root.setBackgroundColor(colors.canvas)
             topScrim.background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(colors.canvas, withAlpha(colors.canvas, 0.9f), Color.TRANSPARENT),
+                intArrayOf(colors.canvas, colors.canvas, withAlpha(colors.canvas, 0.9f), Color.TRANSPARENT),
             )
             togetherButton.background = rounded(withAlpha(colors.canvas, 0.72f), dp(22).toFloat())
             togetherButton.contentDescription = m.label("together", "Watch together")

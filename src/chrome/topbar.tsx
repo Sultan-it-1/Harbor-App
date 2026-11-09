@@ -56,7 +56,7 @@ export function Topbar({ connecting = false }: { connecting?: boolean } = {}) {
         // Once the page scrolls, a shade behind Back and Watch together so the page doesn't show through them.
         <div
           aria-hidden
-          className={`pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-canvas from-50% to-transparent transition-opacity duration-200 ${
+          className={`pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-canvas from-60% to-transparent transition-opacity duration-200 ${
             scrolled ? "opacity-100" : "opacity-0"
           }`}
         />
