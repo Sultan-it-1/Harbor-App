@@ -424,11 +424,17 @@ export function ladderPanels(o: {
     );
   }
   if (o.addonsSettled && has && o.debridCount === 0 && o.allCount === 0) {
+    const hiddenTorrents = o.result?.p2pOnlyHidden ?? 0;
     panel(
       "pk-nodebrid",
       {
         look: "dashed",
-        body: "No playable streams turned up, and no debrid is configured. Real-Debrid, TorBox, AllDebrid, Premiumize, or Debrid-Link will unlock raw torrent results. Some addons bake debrid in (Sootio, Comet/ElfHosted, MediaFusion/ElfHosted) and play without your own keys.",
+        // Torrent sources were found but left out: the phone has no torrent engine, so say that
+        // rather than "nothing turned up".
+        body:
+          hiddenTorrents > 0
+            ? t("Found {n} torrent sources, but torrents can't play on the phone without a debrid service. Add Real-Debrid, TorBox, AllDebrid, Premiumize or Debrid-Link, or install an addon with debrid built in.", { n: hiddenTorrents })
+            : "No playable streams turned up, and no debrid is configured. Real-Debrid, TorBox, AllDebrid, Premiumize, or Debrid-Link will unlock raw torrent results. Some addons bake debrid in (Sootio, Comet/ElfHosted, MediaFusion/ElfHosted) and play without your own keys.",
         button: { id: "panel", label: "Set up a debrid", style: "ink", icon: "arrow" },
       },
       "streaming",

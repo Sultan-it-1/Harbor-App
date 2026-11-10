@@ -1,6 +1,15 @@
 import { useSyncExternalStore } from "react";
 import { isRtl, type UiLanguage } from "./languages";
 
+/** The Android shell draws the player and its notifications itself, in the app's language. */
+function tellShell(lang: UiLanguage): void {
+  try {
+    (window as unknown as { HarborAndroid?: { setLanguage?: (l: string) => void } }).HarborAndroid?.setLanguage?.(lang);
+  } catch {
+    /* an older shell */
+  }
+}
+
 let current: UiLanguage = "en";
 const listeners = new Set<() => void>();
 
@@ -18,6 +27,7 @@ export function getUiLanguage(): UiLanguage {
 export function setUiLanguage(lang: UiLanguage): void {
   const next: UiLanguage = lang === "ar" ? "ar" : "en";
   applyDocument(next);
+  tellShell(next);
   if (next === current) return;
   current = next;
   for (const l of listeners) l();

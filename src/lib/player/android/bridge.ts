@@ -1,6 +1,7 @@
 import { androidApi, onNativePlayerEvent } from "@/lib/android";
 import { emptySnapshot, type PlayerBridge, type PlayerSnapshot } from "../bridge";
 import { uiLocale } from "@/lib/i18n/locale";
+import { readPlayerPrefs, writePlayerPrefs } from "@/lib/player-prefs";
 
 const MAX_INITIAL_SUBS = 20;
 const SUB_BATCH_MS = 700;
@@ -69,6 +70,26 @@ function preferredSubLangs(): string[] {
     return langs.map(toLangCode);
   } catch {
     return [];
+  }
+}
+
+/** "tt123|1|2" (title | season | episode) -> the title's id, which the per-title choices are kept under. */
+function metaIdOf(contentKey: string): string {
+  return contentKey.split("|")[0] ?? "";
+}
+
+/**
+ * Should this title start with subtitles off? The viewer's own choice for the title, else
+ * Settings > "subtitles off by default" (the rule the other players use).
+ */
+function startSubsOff(contentKey: string): boolean {
+  const prefs = readPlayerPrefs(metaIdOf(contentKey));
+  if (prefs?.subsOff != null) return prefs.subsOff;
+  try {
+    const raw = localStorage.getItem("harbor.settings");
+    return raw ? (JSON.parse(raw) as { subtitlesOffByDefault?: unknown }).subtitlesOffByDefault === true : false;
+  } catch {
+    return false;
   }
 }
 
@@ -157,6 +178,13 @@ export function createAndroidBridge(): PlayerBridge {
 
   const off = onNativePlayerEvent((e) => {
     if (!active || owner !== token) return;
+    if (e.type === "subsChoice") {
+      // Remembered for the title, as the other players do: "off" stays off next time, and a
+      // subtitle picked by hand turns them back on for it.
+      const id = metaIdOf(lastContentKey);
+      if (id) writePlayerPrefs(id, e.off ? { subsOff: true } : { subsOff: false, ...(e.lang ? { subLang: e.lang } : {}) });
+      return;
+    }
     if (e.type === "state") {
       snap.positionSec = e.positionMs / 1000;
       snap.durationSec = e.durationMs / 1000;
@@ -229,6 +257,7 @@ export function createAndroidBridge(): PlayerBridge {
           isLive: src.isLive === true,
           contentKey: src.contentKey ?? lastContentKey,
           downloadId: src.contentKey != null ? (src.downloadId ?? "") : lastDownloadId,
+          subsOff: startSubsOff(src.contentKey ?? lastContentKey),
         }),
       );
     },

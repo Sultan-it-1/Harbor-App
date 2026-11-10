@@ -55,7 +55,6 @@ const CORS_OK_HOSTS = new Set([
   "graphql.anilist.co",
   "kitsu.io",
   "kitsu.app",
-  "api.jikan.moe",
   "api.mdblist.com",
   "webservice.fanart.tv",
   "torrentio.strem.fun",
