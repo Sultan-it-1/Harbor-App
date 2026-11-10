@@ -97,7 +97,9 @@ export function PhoneTabBar() {
   const go = (it: Item) => {
     setMoreOpen(false);
     setSearchOpen(false);
-    if (it.parentalKey && locked && hiddenTabs[it.parentalKey]) {
+    // Settings asks for the PIN whenever the profile is locked, as the desktop sidebar does: the
+    // locks themselves are changed from there.
+    if (locked && (it.view === "settings" || (it.parentalKey && hiddenTabs[it.parentalKey]))) {
       setPinFor(it.view);
       return;
     }

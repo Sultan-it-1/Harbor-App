@@ -1,6 +1,7 @@
 const KEY = "harbor.resume";
 
-type Entry = { ms: number; t: number };
+/** [d]: the title's length in ms where the player measured it (older entries have none). */
+type Entry = { ms: number; t: number; d?: number };
 
 function entryKey(id: string, season?: number, episode?: number): string {
   if (typeof season === "number" && typeof episode === "number") {
@@ -31,13 +32,17 @@ export function saveResumeMs(
   ms: number,
   season?: number,
   episode?: number,
+  durationMs?: number,
 ): void {
   if (!Number.isFinite(ms) || ms < 0) return;
   if (typeof season === "number" && typeof episode === "number") {
     if (season < 0 || episode < 1) return;
   }
   const all = readAll();
-  all[entryKey(id, season, episode)] = { ms, t: Date.now() };
+  const key = entryKey(id, season, episode);
+  // A save that doesn't know the length (a position synced from an account) keeps the one measured.
+  const d = durationMs && Number.isFinite(durationMs) && durationMs > 0 ? Math.round(durationMs) : all[key]?.d;
+  all[key] = d ? { ms, t: Date.now(), d } : { ms, t: Date.now() };
   writeAll(all);
 }
 
@@ -70,10 +75,10 @@ export function readResumeEntry(
   id: string,
   season?: number,
   episode?: number,
-): { ms: number; t: number } | null {
+): { ms: number; t: number; d?: number } | null {
   const all = readAll();
   const e = all[entryKey(id, season, episode)];
-  return e ? { ms: e.ms, t: e.t } : null;
+  return e ? { ms: e.ms, t: e.t, d: e.d } : null;
 }
 
 export function clearResume(id: string, season?: number, episode?: number): void {

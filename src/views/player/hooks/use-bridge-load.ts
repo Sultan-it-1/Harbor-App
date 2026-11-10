@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import type { PlayerBridge } from "@/lib/player/bridge";
-import { readResumeMs, saveResumeMs } from "@/lib/resume";
+import { readResumeEntry, saveResumeMs } from "@/lib/resume";
 import { cloudWriteId, episodeFromVideoId, libraryGetOne } from "@/lib/stremio";
 import type { PlayerSrc } from "@/lib/view";
 import { videoIdFor } from "./use-stremio-sync";
@@ -9,7 +9,10 @@ import { isAndroidApp } from "@/lib/android";
 import { androidDownloadIdFor } from "@/lib/download/downloads-store";
 
 const RESUME_PROMPT_MIN_SEC = 30;
+// An episode you reopen after most of it starts over. A film keeps its place until the credits:
+// the same share of its length the account's library drops the position at.
 const RESTART_THRESHOLD = 0.8;
+const MOVIE_RESTART_THRESHOLD = 0.9;
 
 export function useBridgeLoad(params: {
   bridgeRef: RefObject<PlayerBridge | null>;
@@ -74,7 +77,7 @@ export function useBridgeLoad(params: {
         cloudWriteId(src.meta.id, src.imdbId ?? null, src.imdbIdVerified === true),
       );
       const resolved = isLive
-        ? { ms: 0, fromRemote: false }
+        ? { ms: 0, fromRemote: false, durationMs: 0 }
         : await resolveStartMs(
             src.meta.id,
             season,
@@ -86,8 +89,12 @@ export function useBridgeLoad(params: {
           );
       const startMs = resolved.ms;
       const runtimeMin = src.episode?.runtime ?? null;
-      const durationMs = runtimeMin && runtimeMin > 0 ? runtimeMin * 60_000 : 0;
-      const finishedNearEnd = durationMs > 0 && startMs / durationMs >= RESTART_THRESHOLD;
+      // The length the player measured last time (or the account's), else the episode's listed
+      // runtime. A film has no listed runtime here: without the measured length, one watched to
+      // its credits reopened at the credits.
+      const durationMs = resolved.durationMs > 0 ? resolved.durationMs : runtimeMin && runtimeMin > 0 ? runtimeMin * 60_000 : 0;
+      const restartAt = src.episode ? RESTART_THRESHOLD : MOVIE_RESTART_THRESHOLD;
+      const finishedNearEnd = durationMs > 0 && startMs / durationMs >= restartAt;
       const startSec = (!resumePlaybackRef.current || finishedNearEnd ? 0 : startMs) / 1000;
       const guestInRoom = inRoomRef.current && !isHostRef.current;
       const eligibleForPrompt =
@@ -169,9 +176,11 @@ async function resolveStartMs(
   imdbId: string | null,
   imdbVerified: boolean,
   openingVid: string | null,
-): Promise<{ ms: number; fromRemote: boolean }> {
-  const local = readResumeMs(metaId, season, episode);
-  if (!authKey) return { ms: local, fromRemote: false };
+): Promise<{ ms: number; fromRemote: boolean; durationMs: number }> {
+  const entry = readResumeEntry(metaId, season, episode);
+  const local = entry?.ms ?? 0;
+  const localDuration = entry?.d ?? 0;
+  if (!authKey) return { ms: local, fromRemote: false, durationMs: localDuration };
   const matchesEpisode = (
     item: { state?: { season?: number; episode?: number; video_id?: string } } | null,
   ) => {
@@ -194,10 +203,11 @@ async function resolveStartMs(
     const remoteMs = remote.state?.timeOffset ?? 0;
     if (remoteMs <= 0) continue;
     if (remoteMs >= local) {
-      if (remoteMs > local) saveResumeMs(metaId, remoteMs, season, episode);
-      return { ms: remoteMs, fromRemote: true };
+      const remoteDuration = remote.state?.duration ?? 0;
+      if (remoteMs > local) saveResumeMs(metaId, remoteMs, season, episode, remoteDuration);
+      return { ms: remoteMs, fromRemote: true, durationMs: remoteDuration > 0 ? remoteDuration : localDuration };
     }
     break;
   }
-  return { ms: local, fromRemote: false };
+  return { ms: local, fromRemote: false, durationMs: localDuration };
 }

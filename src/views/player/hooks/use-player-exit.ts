@@ -60,7 +60,7 @@ export function usePlayerExit(params: {
     const pos = getPlaybackPosition();
     const placeholder = isSwapOnTrial() || (!!durationSec && durationSec > 0 && durationSec < PLACEHOLDER_MAX_SEC);
     if (Number.isFinite(pos) && pos > 0 && !placeholder) {
-      saveResumeMs(src.meta.id, pos * 1000, season, episode);
+      saveResumeMs(src.meta.id, pos * 1000, season, episode, durationSec ? durationSec * 1000 : undefined);
       if (liveStreamRef && pos >= REMEMBER_MIN_SEC) {
         savePlayback(
           src.meta.id,

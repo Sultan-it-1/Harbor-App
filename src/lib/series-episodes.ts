@@ -5,6 +5,7 @@ import type { Meta } from "./cinemeta";
 import type { PlayEpisode } from "./view";
 import { tmdbDetails, tmdbSeasonEpisodes } from "./providers/tmdb";
 import { resolveMeta } from "./meta-resource";
+import { readActiveStremioAuthKey } from "./auth";
 import { animeKitsuMeta } from "./providers/anime-kitsu-addon";
 import { externalToKitsu } from "./providers/anime-mapping";
 import { parseKitsuId } from "./providers/kitsu";
@@ -87,18 +88,10 @@ registerCache("episodes:tmdbSeason", () => tmdbSeasonCache.size);
 registerCache("episodes:addon", () => addonEpsCache.size);
 registerCache("episodes:cinemetaList", () => cinemetaListCache.size);
 
-function readAuthKey(): string | null {
-  try {
-    const raw = localStorage.getItem("harbor.auth");
-    return raw ? ((JSON.parse(raw) as { authKey?: string }).authKey ?? null) : null;
-  } catch {
-    return null;
-  }
-}
 
 async function getAddonEpisodes(id: string): Promise<PlayEpisode[] | null> {
   if (addonEpsCache.has(id)) return addonEpsCache.get(id)!;
-  const m = await resolveMeta(readAuthKey(), "series", id).catch(() => null);
+  const m = await resolveMeta(readActiveStremioAuthKey(), "series", id).catch(() => null);
   const raw = m?.videos ?? [];
   const eps: PlayEpisode[] = [];
   for (const v of raw) {

@@ -5,6 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useId, useRef, useSt
 import { Poster } from "@/components/poster";
 import { narrowMediaType, type Meta } from "@/lib/cinemeta";
 import { resolveMeta } from "@/lib/meta-resource";
+import { readActiveStremioAuthKey } from "@/lib/auth";
 import { useSettings } from "@/lib/settings";
 import { useView } from "@/lib/view";
 import { useInWatchlist } from "@/lib/watchlist";
@@ -283,16 +284,7 @@ export async function hydrateLibraryMeta(
   const cacheKey = `${type}:${id}`;
   const cached = metaHydrateCache.get(cacheKey);
   if (cached) return cached;
-  const authKey = (() => {
-    try {
-      const raw = localStorage.getItem("harbor.auth");
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as { authKey?: string };
-      return parsed.authKey ?? null;
-    } catch {
-      return null;
-    }
-  })();
+  const authKey = readActiveStremioAuthKey();
   const p = (async () => {
     if (id.startsWith("tmdb:") && tmdbKey) {
       const isTv = id.startsWith("tmdb:tv:") || id.startsWith("tmdb:series:");
