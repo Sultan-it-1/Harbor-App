@@ -3,8 +3,13 @@ import { AddonLogo, resolveAddonLogo } from "@/components/addon-logo";
 import { AddonStarBadge } from "@/components/addon-star-badge";
 import type { ResolvedAddon } from "@/lib/addons-store/store";
 import { useT } from "@/lib/i18n";
+import { isPhoneLayout } from "@/lib/platform";
 import { idOf } from "./addons-utils";
 import { TorrentioHeroArt } from "./torrentio-hero-art";
+import { useTapToConfirm } from "./use-tap-to-confirm";
+
+// Touch screens have no hover to warn that "Installed" removes, so a tap on it asks first.
+const PHONE = isPhoneLayout();
 
 export function HeroCard({
   resolved,
@@ -20,6 +25,7 @@ export function HeroCard({
   installed: boolean;
 }) {
   const t = useT();
+  const confirm = useTapToConfirm();
   const c = resolved.curated;
   if (!c?.hero) return null;
   const isTorrentio = idOf(resolved) === "com.stremio.torrentio.addon";
@@ -70,15 +76,20 @@ export function HeroCard({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              installed ? onUninstall() : onInstall();
+              if (!installed) return onInstall();
+              if (PHONE && !confirm.armed) return confirm.arm();
+              confirm.disarm();
+              onUninstall();
             }}
             className={`h-9 rounded-full px-5 text-[13px] font-semibold transition-all ${
-              installed
-                ? "bg-elevated/70 text-ink ring-1 ring-edge-soft hover:bg-danger/15 hover:text-danger hover:ring-danger/30"
-                : "bg-ink text-canvas hover:opacity-90 active:scale-[0.97]"
+              installed && confirm.armed
+                ? "bg-danger/15 text-danger ring-1 ring-danger/30"
+                : installed
+                  ? "bg-elevated/70 text-ink ring-1 ring-edge-soft hover:bg-danger/15 hover:text-danger hover:ring-danger/30"
+                  : "bg-ink text-canvas hover:opacity-90 active:scale-[0.97]"
             }`}
           >
-            {installed ? t("Installed") : t("Get")}
+            {installed && confirm.armed ? t("Tap again to remove") : installed ? t("Installed") : t("Get")}
           </button>
           <span className="inline-flex h-9 items-center gap-1 rounded-full px-4 text-[12.5px] font-medium text-ink-muted transition-colors group-hover:text-ink">
             {t("View details")}

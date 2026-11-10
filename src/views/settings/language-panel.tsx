@@ -4,6 +4,7 @@ import { Dropdown, type DropdownOption } from "@/components/dropdown";
 import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
 import { openUrl } from "@/lib/window";
+import { RELEASES_REPO } from "@/lib/updater/android-update";
 import { Section, ToggleRow } from "./shared";
 import { SubtitleStylePanel } from "./player-panel";
 import { LanguagesPicker } from "./streaming-panel";
@@ -133,7 +134,7 @@ export function LanguagePanel() {
           {t("Heads up: Harbor was built in English. Multi-language support is partial, so your addons usually catch what Harbor's own filters miss. If you speak another language and want to help fill the gaps, the source is open.")}
         </p>
         <button
-          onClick={() => openUrl("https://github.com/harborstremio/harbor")}
+          onClick={() => openUrl(`https://github.com/${RELEASES_REPO}`)}
           className="flex shrink-0 items-center gap-2 self-start rounded-full border border-edge-soft px-4 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-edge sm:self-auto"
         >
           <Github size={13} strokeWidth={2.2} />

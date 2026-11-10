@@ -124,9 +124,14 @@ export function directTorrentEnabled(): boolean {
   return localTorrentAllowed();
 }
 
+/** The torrent engine is part of the desktop app. The Android app and the web build have none. */
+export function torrentEngineAvailable(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
 export function directStreamAvailable(stream: { infoHash?: string | null }): boolean {
   if (!stream.infoHash) return false;
-  if (!("__TAURI_INTERNALS__" in window)) return false;
+  if (!torrentEngineAvailable()) return false;
   return directTorrentEnabled();
 }
 

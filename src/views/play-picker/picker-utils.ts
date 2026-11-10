@@ -12,6 +12,25 @@ import type { Addon } from "@/lib/addons";
 import type { ScoredStream, Stream, Tier } from "@/lib/streams/types";
 import type { PlayEpisode } from "@/lib/view";
 
+// Auto-play working through a title's sources ("this one failed, try the next") counts its
+// tries in `attempt`. The torrents the player gave up on along the way are kept here, so the
+// picker can tell which of them are no longer in its list (see use-auto-fire).
+let autoPlayFailed: { media: string; hashes: string[] } | null = null;
+
+export function autoPlayMediaKey(metaId: string, episode?: PlayEpisode | null): string {
+  return `${metaId}|${episode?.season ?? ""}|${episode?.episode ?? ""}`;
+}
+
+/** The player gave up on a source (its try number `attempt`) and asks the picker for the next. */
+export function noteAutoPlayFailure(media: string, attempt: number, infoHash: string | null | undefined): void {
+  if (attempt === 0 || autoPlayFailed?.media !== media) autoPlayFailed = { media, hashes: [] };
+  if (infoHash) autoPlayFailed.hashes.push(infoHash.toLowerCase());
+}
+
+export function autoPlayFailedHashes(media: string): string[] {
+  return autoPlayFailed?.media === media ? autoPlayFailed.hashes : [];
+}
+
 export async function cinemetaImdbFallback(
   name: string,
   type: "movie" | "series",

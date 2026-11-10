@@ -19,13 +19,18 @@ class HttpTransferTest {
     private lateinit var dir: File
     private val body = Random(7).nextBytes(3 * 1024 * 1024 + 123)
     private val ranges = Collections.synchronizedList(ArrayList<String?>())
+    /** The headers of the last request for /file. */
+    @Volatile private var fileHeaders: Map<String, String> = emptyMap()
     private val port get() = server.port
 
     @Before fun setUp() {
         dir = Files.createTempDirectory("harbor-dl").toFile()
         server = MiniHttpServer { _, path, headers, out ->
             when (path) {
-                "/file" -> serve(headers["range"], out, rangeSupport = true)
+                "/file" -> {
+                    fileHeaders = headers
+                    serve(headers["range"], out, rangeSupport = true)
+                }
                 "/norange" -> serve(headers["range"], out, rangeSupport = false)
                 "/redirect" -> MiniHttpServer.respond(out, 302, mapOf("Location" to "/file"))
                 "/gone" -> MiniHttpServer.respond(out, 404)
@@ -114,6 +119,46 @@ class HttpTransferTest {
         val part = File(dir, "e.part")
         assertEquals(HttpTransfer.Result.Done, transfer("/redirect", part).run())
         assertArrayEquals(body, part.readBytes())
+    }
+
+    private val login = mapOf("Authorization" to "Bearer secret", "Cookie" to "session=1", "Referer" to "https://example.org/")
+
+    @Test fun redirectOnTheSameHostKeepsTheLogin() {
+        val part = File(dir, "e2.part")
+        assertEquals(HttpTransfer.Result.Done, HttpTransfer("http://127.0.0.1:$port/redirect", login, "HarborTest", part, Probe()).run())
+        assertEquals("Bearer secret", fileHeaders["authorization"])
+        assertEquals("session=1", fileHeaders["cookie"])
+    }
+
+    @Test fun redirectToAnotherHostGoesWithoutTheLogin() {
+        var there: Map<String, String>? = null
+        val other = MiniHttpServer { _, _, headers, out ->
+            there = headers
+            MiniHttpServer.respond(out, 200, mapOf("Content-Length" to "${body.size}"), body)
+        }
+        // 127.0.0.1 redirects to "localhost": the same machine, but another host name.
+        val first = MiniHttpServer { _, _, _, out -> MiniHttpServer.respond(out, 302, mapOf("Location" to "http://localhost:${other.port}/file")) }
+        try {
+            val part = File(dir, "e3.part")
+            assertEquals(HttpTransfer.Result.Done, HttpTransfer("${first.base}/start", login, "HarborTest", part, Probe()).run())
+            assertArrayEquals(body, part.readBytes())
+            assertEquals(null, there!!["authorization"])
+            assertEquals(null, there!!["cookie"])
+            assertEquals("https://example.org/", there!!["referer"])
+        } finally {
+            first.close()
+            other.close()
+        }
+    }
+
+    @Test fun redirectToSomethingThatIsNotHttpFails() {
+        val first = MiniHttpServer { _, _, _, out -> MiniHttpServer.respond(out, 302, mapOf("Location" to "file:///etc/hosts")) }
+        try {
+            val r = HttpTransfer("${first.base}/start", emptyMap(), "HarborTest", File(dir, "e4.part"), Probe()).run()
+            assertTrue("got $r", r is HttpTransfer.Result.Fail && r.problem == HttpTransfer.Problem.OTHER)
+        } finally {
+            first.close()
+        }
     }
 
     @Test fun expiredLinkFails() {

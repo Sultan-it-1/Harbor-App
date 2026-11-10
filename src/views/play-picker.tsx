@@ -57,7 +57,7 @@ import { pendingAddons, useStremioSources } from "./play-picker/stremio-layout";
 import { condenseDescription } from "./play-picker/stremio-row";
 import { qualityTier } from "./play-picker/quality-filter";
 import { useCloseOnAndroidBack } from "@/lib/use-android-back";
-import { abbreviateLanguages, addonInstanceKey, buildAddonOptions } from "./play-picker/picker-utils";
+import { abbreviateLanguages, addonInstanceKey, autoPlayMediaKey, buildAddonOptions } from "./play-picker/picker-utils";
 import { stillInTheatres } from "./play-picker/picker-empty-ladder";
 import {
   diagBlock,
@@ -391,6 +391,7 @@ export function PlayPicker({
     autoActive,
     rememberedHandledFirst: rememberedHandledFirst && autoAttemptIdx === 0,
     attempt,
+    mediaKey: autoPlayMediaKey(meta.id, episode),
     autoCandidates,
     resolving,
     autoAttemptIdx,
@@ -411,9 +412,11 @@ export function PlayPicker({
   });
 
   const allCount = filteredPicker?.all.length ?? 0;
-  const rawCount =
-    (result?.raw.addon.length ?? 0) +
-    (result?.raw.library.length ?? 0);
+  // A list restored from the cache comes without the raw addon lists (the cache doesn't keep
+  // them): count what it does keep. With 0 here, "Only 1 source after filtering" lost its
+  // "Harbor dropped N results" line and the "Show everything anyway" button.
+  const rawSeen = (result?.raw.addon.length ?? 0) + (result?.raw.library.length ?? 0);
+  const rawCount = rawSeen > 0 || !result ? rawSeen : result.picker.all.length + result.rejected.length;
   const addonCount = useMemo(() => {
     if (!filteredPicker) return 0;
     return new Set(filteredPicker.all.map((s) => s.addonId)).size;
@@ -432,7 +435,7 @@ export function PlayPicker({
       seen.set(s.addonId, { id: s.addonId, name: s.addonName, logo: addonLogoMap.get(s.addonId) ?? null });
     }
     return [...seen.values()];
-  }, [result, addonLogoMap]);
+  }, [filteredPicker, addonLogoMap]);
   const backdropSrc = episode?.still || meta.background || meta.poster;
 
   const [maxWaitElapsed, setMaxWaitElapsed] = useState(false);

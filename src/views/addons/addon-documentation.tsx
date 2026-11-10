@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
+import { rehypeSanitizeDoc } from "./sanitize-doc";
 import { getAddon } from "@/lib/providers/stremio-addons";
 import { openUrl } from "@/lib/window";
 import { useT } from "@/lib/i18n";
@@ -70,9 +71,11 @@ export function AddonDocumentation({ slug }: { slug: string }) {
           expanded ? "" : "max-h-[420px] overflow-hidden"
         }`}
       >
+          {/* The text is the addon author's: its raw HTML is parsed, then stripped down to
+              harmless formatting before anything is drawn (see sanitize-doc.ts). */}
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeRaw]}
+            rehypePlugins={[rehypeRaw, rehypeSanitizeDoc]}
             skipHtml={false}
             components={{
               h1: (p) => (

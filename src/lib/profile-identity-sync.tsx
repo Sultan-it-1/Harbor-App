@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useProfiles } from "./profiles";
 import { useSettings, type ContentFilters } from "./settings";
+import { DEFAULT } from "./settings/defaults";
 import { useTogether } from "./together/provider";
 
 function sameHideContent(a: ContentFilters, b: ContentFilters): boolean {
@@ -39,9 +40,12 @@ export function ProfileIdentitySync() {
   }, [activeProfile?.id, activeProfile?.name]);
 
   useEffect(() => {
-    if (!activeProfile?.hideContent) return;
-    if (!sameHideContent(settings.hideContent, activeProfile.hideContent)) {
-      update({ hideContent: activeProfile.hideContent });
+    if (!activeProfile) return;
+    // A profile that never set its own filters gets the defaults, not what the profile before
+    // it had (a child's filters on an adult's profile, or an adult's open state on a child's).
+    const wanted = activeProfile.hideContent ?? DEFAULT.hideContent;
+    if (!sameHideContent(settings.hideContent, wanted)) {
+      update({ hideContent: wanted });
     }
   }, [activeProfile?.id, activeProfile?.hideContent]);
 

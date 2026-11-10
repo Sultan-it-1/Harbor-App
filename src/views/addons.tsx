@@ -194,33 +194,52 @@ export function AddonsView() {
     if (trimmedQuery.length > 0 && tab !== "installed") setTab("browse");
   }, [trimmedQuery, tab]);
 
+  // `asIs` installs the manifest exactly as it is listed, even when the addon can be configured:
+  // that is the addon page's own "Install" / "Install default" button. Anywhere else a
+  // configurable addon opens its page first, so the user can set it up.
+  const installResolved = async (r: ResolvedAddon, asIs: boolean) => {
+    let manifest = r.manifest ?? null;
+    if (!manifest?.behaviorHints) {
+      manifest = await fetchManifestAt(r.transportUrl).catch(() => manifest);
+    }
+    const hints = manifest?.behaviorHints;
+    if (!asIs && (hints?.configurable === true || hints?.configurationRequired === true)) {
+      openAddonDetail(manifest?.id ?? r.manifest?.id ?? r.curated?.id ?? r.transportUrl);
+      return;
+    }
+    const addon = await installAddon(manifest?.id ?? r.manifest?.id ?? r.curated?.id ?? "", r.transportUrl);
+    window.dispatchEvent(
+      new CustomEvent("harbor:addons-changed", {
+        detail: { id: addon.manifest.id, installed: true },
+      }),
+    );
+    refetch();
+    showToast("ok", t("Installed"), {
+      id: addon.manifest.id,
+      name: addon.manifest.name,
+      logo: addon.manifest.logo ?? r.manifest?.logo ?? null,
+    });
+  };
+  const installFailed = (e: unknown) => {
+    const msg = e instanceof Error ? e.message : t("Install failed.");
+    console.warn("[addons] install failed", e);
+    showToast("error", msg);
+  };
   const onInstall = async (r: ResolvedAddon) => {
     try {
-      let manifest = r.manifest ?? null;
-      if (!manifest?.behaviorHints) {
-        manifest = await fetchManifestAt(r.transportUrl).catch(() => manifest);
-      }
-      const hints = manifest?.behaviorHints;
-      if (hints?.configurable === true || hints?.configurationRequired === true) {
-        openAddonDetail(manifest?.id ?? r.manifest?.id ?? r.curated?.id ?? r.transportUrl);
-        return;
-      }
-      const addon = await installAddon(manifest?.id ?? r.manifest?.id ?? r.curated?.id ?? "", r.transportUrl);
-      window.dispatchEvent(
-        new CustomEvent("harbor:addons-changed", {
-          detail: { id: addon.manifest.id, installed: true },
-        }),
-      );
-      refetch();
-      showToast("ok", t("Installed"), {
-        id: addon.manifest.id,
-        name: addon.manifest.name,
-        logo: addon.manifest.logo ?? r.manifest?.logo ?? null,
-      });
+      await installResolved(r, false);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : t("Install failed.");
-      console.warn("[addons] install failed", e);
-      showToast("error", msg);
+      installFailed(e);
+    }
+  };
+  // The addon page shows "Installed" as soon as its button is tapped. The error is shown here and
+  // then passed on, so the page can take that back when the install did not happen.
+  const onInstallAsIs = async (r: ResolvedAddon) => {
+    try {
+      await installResolved(r, true);
+    } catch (e) {
+      installFailed(e);
+      throw e;
     }
   };
   const onInstallUrl = async (rawUrl: string): Promise<string | null> => {
@@ -330,6 +349,7 @@ export function AddonsView() {
         allAddons={allAddons}
         onOpen={openAddonDetail}
         onInstall={onInstall}
+        onInstallAsIs={onInstallAsIs}
         onUninstall={onUninstall}
         onInstallUrl={onInstallUrl}
         showToast={showToast}
@@ -669,6 +689,7 @@ function RemoteOrLocalDetail({
   allAddons,
   onOpen,
   onInstall,
+  onInstallAsIs,
   onUninstall,
   onInstallUrl,
   showToast,
@@ -681,6 +702,7 @@ function RemoteOrLocalDetail({
   allAddons: ResolvedAddon[];
   onOpen: (id: string) => void;
   onInstall: (r: ResolvedAddon) => Promise<void>;
+  onInstallAsIs: (r: ResolvedAddon) => Promise<void>;
   onUninstall: (r: ResolvedAddon) => Promise<void>;
   onInstallUrl: (rawUrl: string) => Promise<string | null>;
   showToast: (kind: "ok" | "error", text: string) => void;
@@ -757,7 +779,7 @@ function RemoteOrLocalDetail({
         recommended={recs.recommended}
         installedIds={installedIds}
         onOpen={onOpen}
-        onInstall={() => onInstall(resolved)}
+        onInstall={() => onInstallAsIs(resolved)}
         onInstallAddon={onInstall}
         onUninstall={() => onUninstall(resolved)}
         onInstallUrl={onInstallUrl}

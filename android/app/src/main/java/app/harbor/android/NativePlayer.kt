@@ -38,6 +38,7 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
@@ -200,7 +201,7 @@ class NativePlayer(
         if (pickingStream != null) {
             pickingStream = null
             panel?.dismiss()
-            toast("تم تبديل المصدر")
+            toast(Strings.sourceSwitched)
         }
         start(src, src.optLong("startMs", 0))
         addToCatalog(src.optJSONArray("subtitles"))
@@ -223,12 +224,19 @@ class NativePlayer(
         val headers = HashMap<String, String>()
         src.optJSONObject("headers")?.let { h -> h.keys().forEach { k -> headers[k] = h.getString(k) } }
         val ua = headers.remove("User-Agent") ?: headers.remove("user-agent") ?: userAgent
-        val http = DefaultHttpDataSource.Factory()
-            .setUserAgent(ua)
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(20_000)
-            .setReadTimeoutMs(30_000)
-            .setDefaultRequestProperties(headers)
+        // A stream that comes with a login (Authorization / Cookie) goes through our own source:
+        // Media3's repeats every header at each redirect, which would hand the login to whatever
+        // host a redirect leads to. Streams without one stay on Media3's.
+        val http: DataSource.Factory = if (headers.keys.any { RedirectGuard.isCredential(it) }) {
+            GuardedHttpDataSource.Factory(ua, headers, HTTP_CONNECT_TIMEOUT_MS, HTTP_READ_TIMEOUT_MS)
+        } else {
+            DefaultHttpDataSource.Factory()
+                .setUserAgent(ua)
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(HTTP_CONNECT_TIMEOUT_MS)
+                .setReadTimeoutMs(HTTP_READ_TIMEOUT_MS)
+                .setDefaultRequestProperties(headers)
+        }
         val dataSource = DefaultDataSource.Factory(ctx, http)
         val renderers = DefaultRenderersFactory(ctx)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
@@ -335,7 +343,7 @@ class NativePlayer(
         }
         if (now - reconnectSince > RECONNECT_BUDGET_MS) return false
         reconnectAttempts++
-        flash(R.drawable.ic_refresh_cw, if (isOnline()) "جارٍ إعادة الاتصال…" else "بانتظار الإنترنت…", holdMs = RECONNECT_BUDGET_MS)
+        flash(R.drawable.ic_refresh_cw, if (isOnline()) Strings.reconnecting else Strings.waitingForInternetEllipsis, holdMs = RECONNECT_BUDGET_MS)
         watchNetwork()
         updateKeepScreenOn()
         handler.removeCallbacks(reconnect)
@@ -362,7 +370,7 @@ class NativePlayer(
         reconnectAttempts = 0
         handler.removeCallbacks(reconnect)
         unwatchNetwork()
-        flash(R.drawable.ic_play, "رجع الاتصال", holdMs = 900)
+        flash(R.drawable.ic_play, Strings.backOnline, holdMs = 900)
     }
 
     /** Native gave up: tell the page (fatal) and show the user how to carry on, right here —
@@ -383,7 +391,7 @@ class NativePlayer(
         )
         flash(
             R.drawable.ic_refresh_cw,
-            if (network) "انقطع البث. اضغط ▶ للمحاولة مرة ثانية" else "تعذّر تشغيل هذا المصدر. اضغط ▶ للمحاولة أو اختر مصدراً آخر",
+            if (network) Strings.streamDropped else Strings.sourceFailedRetry,
             holdMs = 8000,
         )
         view?.showController()
@@ -610,11 +618,11 @@ class NativePlayer(
             texts.addView(it)
         }
         bar.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(ctx.iconButton(R.drawable.ic_layers, "المصادر") { openStreams() })
-        bar.addView(ctx.iconButton(R.drawable.ic_captions, "الترجمة") { openSubs("tracks") })
-        bar.addView(ctx.iconButton(R.drawable.ic_audio_lines, "الصوت والسرعة") { openAudio() })
-        bar.addView(ctx.iconButton(R.drawable.ic_scan, "حجم الصورة") { cycleResize() })
-        bar.addView(ctx.iconButton(R.drawable.ic_lock, "قفل الشاشة") { setLocked(true) })
+        bar.addView(ctx.iconButton(R.drawable.ic_layers, Strings.sources) { openStreams() })
+        bar.addView(ctx.iconButton(R.drawable.ic_captions, Strings.subtitles) { openSubs("tracks") })
+        bar.addView(ctx.iconButton(R.drawable.ic_audio_lines, Strings.audioAndSpeed) { openAudio() })
+        bar.addView(ctx.iconButton(R.drawable.ic_scan, Strings.pictureSize) { cycleResize() })
+        bar.addView(ctx.iconButton(R.drawable.ic_lock, Strings.lockScreen) { setLocked(true) })
         root.addView(bar, FrameLayout.LayoutParams(MainActivity.MATCH, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
         topBar = bar
     }
@@ -631,7 +639,7 @@ class NativePlayer(
             addView(ctx.icon(R.drawable.ic_skip_forward, 18, Color.BLACK).apply {
                 layoutParams = LinearLayout.LayoutParams(ctx.dp(18), ctx.dp(18)).apply { marginEnd = ctx.dp(8) }
             })
-            addView(ctx.label("الحلقة التالية", 14f, Color.BLACK, bold = true))
+            addView(ctx.label(Strings.nextEpisode, 14f, Color.BLACK, bold = true))
         }
         root.addView(b, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ctx.dp(42), Gravity.BOTTOM or Gravity.END).apply {
             setMargins(0, 0, ctx.dp(28), ctx.dp(96))
@@ -659,7 +667,7 @@ class NativePlayer(
 
     private fun buildUnlockButton() {
         val ctx = activity
-        val b = ctx.iconButton(R.drawable.ic_lock_open, "فتح القفل") { setLocked(false) }.apply {
+        val b = ctx.iconButton(R.drawable.ic_lock_open, Strings.unlock) { setLocked(false) }.apply {
             background = rounded(Color.argb(150, 0, 0, 0), 999f)
             visibility = View.GONE
         }
@@ -785,7 +793,7 @@ class NativePlayer(
             unlockButton?.visibility = View.VISIBLE
             handler.removeCallbacks(hideUnlock)
             handler.postDelayed(hideUnlock, 2500)
-            toast("الشاشة مقفلة")
+            toast(Strings.screenLocked)
         } else {
             unlockButton?.visibility = View.GONE
             pv.showController()
@@ -801,9 +809,9 @@ class NativePlayer(
         }
         view?.resizeMode = resizeMode
         flash(R.drawable.ic_scan, when (resizeMode) {
-            AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "ملء الشاشة"
-            AspectRatioFrameLayout.RESIZE_MODE_FILL -> "تمديد"
-            else -> "الحجم الأصلي"
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> Strings.fillScreen
+            AspectRatioFrameLayout.RESIZE_MODE_FILL -> Strings.stretch
+            else -> Strings.originalSize
         }, holdMs = 900)
     }
 
@@ -835,7 +843,7 @@ class NativePlayer(
             p.seekTo(target)
             flash(
                 if (forward) R.drawable.ic_fast_forward else R.drawable.ic_rewind,
-                (if (forward) "+" else "−") + "$totalSec ث",
+                (if (forward) "+" else "−") + Strings.seconds(totalSec),
                 (if (forward) Gravity.END else Gravity.START) or Gravity.CENTER_VERTICAL,
             )
         }
@@ -843,7 +851,7 @@ class NativePlayer(
         override fun onDoubleTapCenter() {
             val p = player ?: return
             if (p.isPlaying) p.pause() else p.play()
-            flash(if (p.playWhenReady) R.drawable.ic_play else R.drawable.ic_pause, if (p.playWhenReady) "تشغيل" else "إيقاف مؤقت")
+            flash(if (p.playWhenReady) R.drawable.ic_play else R.drawable.ic_pause, if (p.playWhenReady) Strings.play else Strings.pause)
         }
 
         override fun onBrightnessStart(): Float {
@@ -896,7 +904,7 @@ class NativePlayer(
             if (want == resizeMode) return
             resizeMode = want
             view?.resizeMode = want
-            flash(R.drawable.ic_scan, if (zoomIn) "ملء الشاشة" else "الحجم الأصلي", holdMs = 900)
+            flash(R.drawable.ic_scan, if (zoomIn) Strings.fillScreen else Strings.originalSize, holdMs = 900)
         }
 
         override fun onGestureEnd() {}
@@ -950,7 +958,7 @@ class NativePlayer(
     // ---- streams ---------------------------------------------------------------------------
 
     private fun openStreams() {
-        openPanel("streams", "المصادر")
+        openPanel("streams", Strings.sources)
         streamsPayload = null
         renderStreams()
         emit(JSONObject().put("type", "requestStreams").toString())
@@ -961,18 +969,18 @@ class NativePlayer(
         p.clear()
         val data = streamsPayload
         if (data == null) {
-            p.row("جارٍ جلب المصادر…", null, loading = true, onClick = null)
+            p.row(Strings.fetchingSources, null, loading = true, onClick = null)
             return
         }
         val items = data.optJSONArray("items") ?: JSONArray()
         if (items.length() == 0) {
-            p.note(data.optString("message").ifBlank { "ما فيه مصادر ثانية لهذا العنوان." })
+            p.note(data.optString("message").ifBlank { Strings.noOtherSources })
             return
         }
         val qualities = linkedSetOf<String>()
         for (i in 0 until items.length()) items.optJSONObject(i)?.optString("quality")?.takeIf { it.isNotBlank() }?.let { qualities.add(it) }
         if (qualities.size > 1) {
-            p.chips(listOf(Triple("الكل", streamQuality == "all") { streamQuality = "all"; renderStreams() }) +
+            p.chips(listOf(Triple(Strings.all, streamQuality == "all") { streamQuality = "all"; renderStreams() }) +
                 qualities.map { q -> Triple(q, streamQuality == q) { streamQuality = q; renderStreams() } })
         }
         var shown = 0
@@ -997,7 +1005,7 @@ class NativePlayer(
             }
             shown++
         }
-        if (shown == 0) p.note("ما فيه مصادر بهذه الجودة.")
+        if (shown == 0) p.note(Strings.noSourcesInQuality)
     }
 
     // ---- subtitles -------------------------------------------------------------------------
@@ -1006,14 +1014,14 @@ class NativePlayer(
 
     private fun openSubs(tab: String) {
         subsTab = tab
-        openPanel("subs", "الترجمة")
+        openPanel("subs", Strings.subtitles)
         renderSubs(tab)
     }
 
     private fun langName(code: String?): String {
-        if (code.isNullOrBlank() || code.equals("und", true)) return "غير محددة"
+        if (code.isNullOrBlank() || code.equals("und", true)) return Strings.unknownLanguage
         val loc = Locale.forLanguageTag(code)
-        val name = loc.getDisplayLanguage(Locale.getDefault())
+        val name = loc.getDisplayLanguage(Strings.locale)
         return if (name.isNullOrBlank() || name.equals(code, true)) code.uppercase() else name.replaceFirstChar { it.titlecase() }
     }
 
@@ -1030,8 +1038,8 @@ class NativePlayer(
         subsTab = tab
         p.clear()
         p.chips(listOf(
-            Triple("الترجمات", tab == "tracks") { renderSubs("tracks") },
-            Triple("المظهر والتوقيت", tab == "style") { renderSubs("style") },
+            Triple(Strings.subtitlesTab, tab == "tracks") { renderSubs("tracks") },
+            Triple(Strings.lookAndTiming, tab == "style") { renderSubs("style") },
         ))
         if (tab == "style") {
             SubtitleControls(activity, subStyle, onStyle = { applySubStyle() }, getDelayMs = { ext?.delayMs ?: 0 }, onDelay = { setSubDelay(it) })
@@ -1040,7 +1048,7 @@ class NativePlayer(
         }
         val pl = player
         val embeddedSelected = pl?.let { selectedEmbedded(it) }
-        p.row("بدون ترجمة", selected = activeExtId == null && embeddedSelected == null) {
+        p.row(Strings.noSubtitles, selected = activeExtId == null && embeddedSelected == null) {
             userPickedSub = true
             selectOff()
         }
@@ -1048,14 +1056,14 @@ class NativePlayer(
         // Embedded tracks.
         val embedded = pl?.let { textTracks(it) } ?: emptyList()
         if (embedded.isNotEmpty()) {
-            p.section("مدمجة في الملف (${embedded.size})")
+            p.section(Strings.embedded(embedded.size))
             embedded.forEach { t ->
                 val f = t.group.getTrackFormat(t.index)
                 val sel = activeExtId == null && t.group.isTrackSelected(t.index)
                 val forced = f.selectionFlags and C.SELECTION_FLAG_FORCED != 0
                 p.row(
                     f.label?.takeIf { it.isNotBlank() } ?: langName(f.language),
-                    listOfNotNull(f.language?.let { langName(it) }.takeIf { f.label != null }, if (forced) "إجبارية" else null)
+                    listOfNotNull(f.language?.let { langName(it) }.takeIf { f.label != null }, if (forced) Strings.forced else null)
                         .joinToString(" · ").ifBlank { null },
                     selected = sel,
                 ) {
@@ -1067,7 +1075,7 @@ class NativePlayer(
 
         // Saved with the download: local files, so they also work offline.
         if (saved.isNotEmpty()) {
-            p.section("محفوظة على الجهاز (${saved.size})")
+            p.section(Strings.savedOnDevice(saved.size))
             saved.sortedBy { prefRank(it.lang) }.forEach { s ->
                 p.row(
                     s.label,
@@ -1083,26 +1091,23 @@ class NativePlayer(
 
         // Offline: addon subtitles can't be fetched, so only the saved ones are offered.
         if (!isOnline()) {
-            p.section("من الإضافات")
-            p.note(
-                if (saved.isEmpty()) "أنت بدون إنترنت. ترجمات الإضافات تحتاج إنترنت، وما فيه ترجمات محفوظة مع هذا الفيديو."
-                else "أنت بدون إنترنت، فتظهر الترجمات المحفوظة على الجهاز فقط.",
-            )
+            p.section(Strings.fromAddons)
+            p.note(if (saved.isEmpty()) Strings.offlineNoSaved else Strings.offlineSavedOnly)
             return
         }
 
         // Addon subtitles, grouped by language (the saved ones aren't repeated here).
         val online = catalog.filter { !isSaved(it) }
-        p.section(if (online.isEmpty()) "من الإضافات" else "من الإضافات (${online.size})")
+        p.section(if (online.isEmpty()) Strings.fromAddons else Strings.fromAddonsCount(online.size))
         if (online.isEmpty()) {
-            p.note(if (searching) "جارٍ البحث في الإضافات…" else "ما وصلت ترجمات من الإضافات بعد.")
+            p.note(if (searching) Strings.searchingAddons else Strings.noAddonSubtitlesYet)
         } else {
-            if (downloadId != null) p.note("زر التحميل جنب كل ترجمة يحفظها مع الفيديو عشان تشتغل بدون إنترنت.")
+            if (downloadId != null) p.note(Strings.saveButtonHint)
             val byLang = online.groupBy { baseLang(it.lang).ifBlank { "und" } }
             val order = byLang.keys.sortedWith(compareBy<String>({ prefRank(it) }, { langName(it) }))
             val chosen = shownLangs ?: loadShownLangs(order).also { shownLangs = it }
             p.chips(
-                listOf(Triple("الكل", chosen.containsAll(order)) {
+                listOf(Triple(Strings.all, chosen.containsAll(order)) {
                     shownLangs = if (chosen.containsAll(order)) mutableSetOf() else order.toMutableSet()
                     saveShownLangs(); renderSubs("tracks")
                 }) + order.map { l ->
@@ -1115,7 +1120,7 @@ class NativePlayer(
                 },
             )
             val visible = order.filter { it in chosen }
-            if (visible.isEmpty()) p.note("اختر لغة من فوق عشان تظهر ترجماتها.")
+            if (visible.isEmpty()) p.note(Strings.pickLanguageAbove)
             visible.forEach { l ->
                 val list = byLang[l] ?: return@forEach
                 p.section("${langName(l)} (${list.size})")
@@ -1126,7 +1131,7 @@ class NativePlayer(
                         selected = activeExtId == s.id,
                         loading = s.id in loading,
                         actionIcon = if (downloadId != null) R.drawable.ic_download else null,
-                        actionDesc = "حفظ الترجمة مع الفيديو",
+                        actionDesc = Strings.saveSubtitleWithVideo,
                         actionBusy = s.id in saving,
                         onAction = { saveSub(s) },
                     ) {
@@ -1136,7 +1141,7 @@ class NativePlayer(
                 }
             }
         }
-        p.action(if (searching) "جارٍ البحث…" else "جلب ترجمات من الإضافات", R.drawable.ic_refresh_cw) {
+        p.action(if (searching) Strings.searching else Strings.getAddonSubtitles, R.drawable.ic_refresh_cw) {
             if (searching) return@action
             searching = true
             emit(JSONObject().put("type", "subSearch").toString())
@@ -1201,9 +1206,9 @@ class NativePlayer(
                         parsed[s.id]?.let { parsed[copy.id] = it }
                         if (activeExtId == s.id) activeExtId = copy.id
                     }
-                    toast("انحفظت الترجمة مع الفيديو")
+                    toast(Strings.subtitleSaved)
                 } else {
-                    toast("تعذّر حفظ هذه الترجمة، جرّب غيرها")
+                    toast(Strings.subtitleSaveFailed)
                 }
                 refreshPanel()
             }
@@ -1278,7 +1283,7 @@ class NativePlayer(
                 loading.remove(s.id)
                 if (gen != contentKey) return@post
                 if (list.isNullOrEmpty()) {
-                    if (onFail != null) onFail() else toast("تعذّر تحميل هذه الترجمة، جرّب غيرها")
+                    if (onFail != null) onFail() else toast(Strings.subtitleLoadFailed)
                     refreshPanel()
                     return@post
                 }
@@ -1342,7 +1347,7 @@ class NativePlayer(
 
     private fun setSubDelay(ms: Long) {
         if (activeExtId == null) {
-            toast("التأخير يشتغل على ترجمات الإضافات")
+            toast(Strings.delayAddonOnly)
             return
         }
         ext?.delayMs = ms.coerceIn(-600_000, 600_000)
@@ -1351,7 +1356,7 @@ class NativePlayer(
     // ---- audio + speed ---------------------------------------------------------------------
 
     private fun openAudio() {
-        openPanel("audio", "الصوت والسرعة")
+        openPanel("audio", Strings.audioAndSpeed)
         renderAudio()
     }
 
@@ -1371,7 +1376,7 @@ class NativePlayer(
             else -> f.sampleMimeType?.substringAfter('/')?.uppercase()
         }
         val ch = when (f.channelCount) {
-            1 -> "أحادي"; 2 -> "ستيريو"; 6 -> "5.1"; 8 -> "7.1"
+            1 -> Strings.mono; 2 -> Strings.stereo; 6 -> "5.1"; 8 -> "7.1"
             Format.NO_VALUE -> null
             else -> "${f.channelCount}ch"
         }
@@ -1383,8 +1388,8 @@ class NativePlayer(
         val pl = player ?: return
         p.clear()
         val groups = pl.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
-        p.section("المسار الصوتي")
-        if (groups.isEmpty()) p.note("ما فيه مسارات صوت.")
+        p.section(Strings.audioTrack)
+        if (groups.isEmpty()) p.note(Strings.noAudioTracks)
         groups.forEach { g ->
             for (i in 0 until g.length) {
                 if (!g.isTrackSupported(i)) continue
@@ -1401,11 +1406,11 @@ class NativePlayer(
                 }
             }
         }
-        p.section("سرعة التشغيل")
+        p.section(Strings.playbackSpeed)
         val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
         val cur = pl.playbackParameters.speed
         p.chips(speeds.map { s ->
-            Triple((if (s == 1f) "عادي" else "${s}x"), kotlin.math.abs(cur - s) < 0.01f) {
+            Triple((if (s == 1f) Strings.normalSpeed else "${s}x"), kotlin.math.abs(cur - s) < 0.01f) {
                 pl.playbackParameters = PlaybackParameters(s)
                 renderAudio()
             }
@@ -1435,14 +1440,14 @@ class NativePlayer(
             }
             "streamFailed" -> {
                 pickingStream = null
-                toast(c.optString("message").ifBlank { "تعذّر تشغيل هذا المصدر، جرّب غيره" })
+                toast(c.optString("message").ifBlank { Strings.sourceFailedTryAnother })
                 if (panelKind == "streams") renderStreams()
                 return
             }
             "subSearch" -> {
                 searching = false
                 val n = c.optInt("count", 0)
-                if (c.optBoolean("manual")) toast(if (n == 0) "ما لقيت ترجمات من الإضافات" else "لقيت $n ترجمة")
+                if (c.optBoolean("manual")) toast(if (n == 0) Strings.noAddonSubtitlesFound else Strings.subtitlesFound(n))
                 if (panelKind == "subs") refreshPanel()
                 return
             }
@@ -1569,6 +1574,8 @@ class NativePlayer(
     private companion object {
         /** How long a dropped stream keeps trying before the player gives up and says so. */
         const val RECONNECT_BUDGET_MS = 120_000L
+        const val HTTP_CONNECT_TIMEOUT_MS = 20_000
+        const val HTTP_READ_TIMEOUT_MS = 30_000
     }
 }
 

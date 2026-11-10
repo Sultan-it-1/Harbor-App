@@ -18,7 +18,8 @@ let checkShownThisSession = false;
 /** How long a just-picked source gets to start for real before going back. */
 const TRIAL_MS = 40_000;
 
-type LiveSource = {
+/** What the player needs to load a source again. */
+export type LiveSource = {
   url: string;
   headers?: Record<string, string>;
   subtitles?: PlayerSrc["subtitles"];
@@ -294,6 +295,7 @@ export function useStreamSwitcher(params: {
     swapResolvingKey,
     liveUrl,
     liveStreamRef,
+    liveSourceRef: liveRef,
     pickAnother,
     onSwitchStream,
   };

@@ -266,6 +266,9 @@ export function Home({ active = true }: { active?: boolean }) {
   }, [simklConnected]);
 
   const trackedRef = useRef<Set<string>>(new Set());
+  // The last library that arrived, and whose it was. It outlives the effect below, which runs
+  // again every time Home is shown or left: that alone is no reason to fetch it all again.
+  const libraryLoadedRef = useRef({ authKey: "", at: 0 });
   useEffect(() => {
     if (!authKey) {
       setItems([]);
@@ -276,12 +279,15 @@ export function Home({ active = true }: { active?: boolean }) {
     // on every return to the app. Refresh at most every 2 minutes on return, and poll every 5.
     const phone = isPhoneLayout();
     const minGapMs = phone ? 2 * 60_000 : 0;
-    let lastLoadAt = 0;
+    const loaded = libraryLoadedRef.current;
+    const fresh = loaded.authKey === authKey && Date.now() - loaded.at < minGapMs;
+    let lastLoadAt = fresh ? loaded.at : 0;
     const load = () => {
       lastLoadAt = Date.now();
       library(authKey)
         .then((libItems) => {
           if (cancelled) return;
+          libraryLoadedRef.current = { authKey, at: Date.now() };
           setItems(libItems);
           const importKey = `harbor.discover.libImported.${user?._id ?? "anon"}`;
           let importedSince = 0;
@@ -329,7 +335,7 @@ export function Home({ active = true }: { active?: boolean }) {
         })
         .catch(console.error);
     };
-    load();
+    if (!fresh) load();
     if (active) {
       const refresh = () => {
         if (document.visibilityState === "visible" && Date.now() - lastLoadAt >= minGapMs) load();

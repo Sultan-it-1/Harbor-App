@@ -4,6 +4,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.MalformedURLException
 import java.net.URL
 
 /**
@@ -69,6 +70,9 @@ class HttpTransfer(
 
     fun run(): Result {
         var target = URL(url)
+        // The page's login headers are for the host the link points at: a redirect to another
+        // host goes without them (RedirectGuard).
+        val firstHost = target.host
         var redirects = 0
         var restarted = false
         val startBytes = if (part.exists()) part.length() else 0L
@@ -86,7 +90,9 @@ class HttpTransfer(
                 c.readTimeout = READ_TIMEOUT_MS
                 c.setRequestProperty("User-Agent", userAgent)
                 headers.forEach { (k, v) ->
-                    if (!k.equals("user-agent", true) && !k.equals("range", true) && !k.equals("accept-encoding", true)) {
+                    if (!k.equals("user-agent", true) && !k.equals("range", true) && !k.equals("accept-encoding", true) &&
+                        RedirectGuard.maySend(k, firstHost, target.host)
+                    ) {
                         c.setRequestProperty(k, v)
                     }
                 }
@@ -109,7 +115,11 @@ class HttpTransfer(
                 c.disconnect()
                 if (loc.isNullOrBlank()) return Result.Fail(Problem.OTHER, "redirect without a location", code)
                 if (++redirects > MAX_REDIRECTS) return Result.Fail(Problem.OTHER, "too many redirects", code)
-                target = URL(target, loc)
+                val next = try { URL(target, loc) } catch (_: MalformedURLException) { null }
+                if (next == null || (next.protocol != "http" && next.protocol != "https")) {
+                    return Result.Fail(Problem.OTHER, "redirect to an unsupported address", code)
+                }
+                target = next
                 continue
             }
 

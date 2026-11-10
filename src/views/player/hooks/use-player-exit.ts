@@ -8,6 +8,7 @@ import { saveResumeMs } from "@/lib/resume";
 import type { PartialSyncState } from "@/lib/together/provider";
 import { useView, type PlayerSrc, type PlayerStreamRef } from "@/lib/view";
 import { MAX_AUTORETRY_ATTEMPTS } from "../player-utils";
+import { autoPlayMediaKey, noteAutoPlayFailure } from "@/views/play-picker/picker-utils";
 
 const REMEMBER_MIN_SEC = 30;
 
@@ -104,6 +105,7 @@ export function usePlayerExit(params: {
       return;
     }
     if (nextAttempt >= 2) clearOnePickerCache(src.meta, src.episode);
+    noteAutoPlayFailure(autoPlayMediaKey(src.meta.id, src.episode), src.attempt ?? 0, src.streamRef?.infoHash);
     openPicker(
       src.meta,
       src.episode,

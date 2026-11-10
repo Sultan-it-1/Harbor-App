@@ -1,3 +1,5 @@
+import { lruGet, lruSet } from "@/lib/cache";
+import { registerEvictable } from "@/lib/maintenance";
 import { safeFetch as fetch } from "@/lib/safe-fetch";
 
 const CINEMETA = "https://v3-cinemeta.strem.io";
@@ -80,7 +82,37 @@ export const topMovies = (genre?: string, skip = 0) =>
 export const topSeries = (genre?: string, skip = 0) =>
   catalog(cinemetaTopPath("series", genre, skip));
 
+// The card, the hero, the detail page and the rating of one title all ask for the same meta
+// within moments of each other: an answer is kept for five minutes, and a request already on
+// its way is shared. Failures are not kept, so the next call tries again.
+const META_TTL_MS = 5 * 60 * 1000;
+const META_CACHE_MAX = 48;
+const metaCache = new Map<string, { v: Meta; t: number }>();
+const metaInflight = new Map<string, Promise<Meta | null>>();
+
+registerEvictable("cinemeta-meta", (aggressive) => {
+  if (aggressive) return metaCache.clear();
+  const now = Date.now();
+  for (const [k, e] of metaCache) if (now - e.t > META_TTL_MS) metaCache.delete(k);
+});
+
 export async function meta(type: "movie" | "series", id: string): Promise<Meta | null> {
+  const key = `${type}/${id}`;
+  const hit = lruGet(metaCache, key);
+  if (hit && Date.now() - hit.t < META_TTL_MS) return hit.v;
+  const pending = metaInflight.get(key);
+  if (pending) return pending;
+  const p = fetchMeta(type, id)
+    .then((m) => {
+      if (m) lruSet(metaCache, key, { v: m, t: Date.now() }, META_CACHE_MAX);
+      return m;
+    })
+    .finally(() => metaInflight.delete(key));
+  metaInflight.set(key, p);
+  return p;
+}
+
+async function fetchMeta(type: "movie" | "series", id: string): Promise<Meta | null> {
   try {
     const res = await fetch(`${CINEMETA}/meta/${type}/${id}.json`);
     if (!res.ok) return null;
