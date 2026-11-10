@@ -29,6 +29,14 @@ object HarborColors {
     val DIVIDER = Color.argb(22, 255, 255, 255)
 }
 
+/** Which way the native player's own views read: the app's language once the page has said it
+ *  (Strings), the phone's until then. */
+fun Context.uiDirection(): Int = when {
+    !Strings.known -> resources.configuration.layoutDirection
+    Strings.arabic -> View.LAYOUT_DIRECTION_RTL
+    else -> View.LAYOUT_DIRECTION_LTR
+}
+
 fun Context.dp(v: Float): Int = (v * resources.displayMetrics.density).toInt()
 fun Context.dp(v: Int): Int = dp(v.toFloat())
 
@@ -89,7 +97,8 @@ class SidePanel(private val ctx: Context, private val host: FrameLayout, title: 
         val metrics = ctx.resources.displayMetrics
         // Right-to-left (Arabic): the panel sits at the left edge, so round the other corners and
         // slide in from the left.
-        val rtl = ctx.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+        scrim.layoutDirection = ctx.uiDirection()
+        val rtl = ctx.uiDirection() == View.LAYOUT_DIRECTION_RTL
         val r = ctx.dp(22).toFloat()
         val width = minOf(ctx.dp(460), (metrics.widthPixels * 0.62f).toInt()).coerceAtLeast(minOf(ctx.dp(320), metrics.widthPixels))
         panel.orientation = LinearLayout.VERTICAL
@@ -103,7 +112,7 @@ class SidePanel(private val ctx: Context, private val host: FrameLayout, title: 
         header.orientation = LinearLayout.HORIZONTAL
         header.gravity = Gravity.CENTER_VERTICAL
         header.addView(titleView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        header.addView(ctx.iconButton(R.drawable.ic_x, "إغلاق") { dismiss() })
+        header.addView(ctx.iconButton(R.drawable.ic_x, Strings.close) { dismiss() })
         panel.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         body.orientation = LinearLayout.VERTICAL
@@ -120,7 +129,7 @@ class SidePanel(private val ctx: Context, private val host: FrameLayout, title: 
         if (isOpen) return
         isOpen = true
         host.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        val rtl = ctx.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+        val rtl = scrim.layoutDirection == View.LAYOUT_DIRECTION_RTL
         panel.translationX = (if (rtl) -1 else 1) * ctx.dp(80).toFloat()
         panel.alpha = 0f
         panel.animate().translationX(0f).alpha(1f).setDuration(180).start()

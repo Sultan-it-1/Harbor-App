@@ -164,6 +164,10 @@ class NativePlayer(
     private var pickingStream: String? = null
     private var streamQuality = "all"
     private var brightnessTouched = false
+    /** The language and direction the chrome was built for. Its texts and sides are set when it
+     *  is built, so after a change (Settings > Language) it is built again the next time the
+     *  player shows. */
+    private var chromeFor = ""
 
     val isShowing: Boolean get() = view?.visibility == View.VISIBLE
 
@@ -197,6 +201,10 @@ class NativePlayer(
         src.optString("title").takeIf { it.isNotBlank() }?.let { title = it }
         prefSubLangs = jsonStrings(src.optJSONArray("prefSubLangs")).ifEmpty { prefSubLangs }
         prefAudioLangs = jsonStrings(src.optJSONArray("prefAudioLangs")).ifEmpty { prefAudioLangs }
+        // Settings > Language > "subtitles off by default", or the viewer turned them off for this
+        // title: start without subtitles and pick none automatically. A choice already made in
+        // this player's own panel stays (a stream switch plays the same title again).
+        if (src.optBoolean("subsOff", false) && !userPickedSub) subsOff = true
         subStyle = SubStyle.load(activity) ?: SubStyle.fromHarbor(src.optJSONObject("subStyle"))
         if (pickingStream != null) {
             pickingStream = null
@@ -516,6 +524,7 @@ class NativePlayer(
 
     private fun show(p: ExoPlayer) {
         val v = view ?: createView()
+        if (chromeFor != chromeKey()) buildChrome()
         v.player = p
         v.visibility = View.VISIBLE
         v.bringToFront()
@@ -589,23 +598,39 @@ class NativePlayer(
             controllerVisible = vis == View.VISIBLE
             updateChrome()
         })
+        buildChrome()
+        return pv
+    }
+
+    private fun chromeKey() = "${Strings.lang}|${activity.uiDirection()}"
+
+    /** Top bar, next-episode button, the indicator and the unlock button, in the app's language
+     *  and direction (root keeps the phone's direction, so each piece gets its own, and a side of
+     *  the screen is worked out here rather than left to root). */
+    private fun buildChrome() {
+        listOfNotNull(topBar, nextButton, indicator, unlockButton).forEach { root.removeView(it) }
         buildTopBar()
         buildNextButton()
         buildIndicator()
         buildUnlockButton()
-        return pv
+        chromeFor = chromeKey()
     }
+
+    private fun side(relative: Int) = Gravity.getAbsoluteGravity(relative, activity.uiDirection())
 
     private fun buildTopBar() {
         val ctx = activity
         val bar = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
+            layoutDirection = ctx.uiDirection()
             gravity = Gravity.CENTER_VERTICAL
             setPadding(ctx.dp(20), ctx.dp(14), ctx.dp(20), ctx.dp(28))
             // No shade of its own: it only shows with the controls, whose shade covers the screen.
         }
-        bar.addView(ctx.iconButton(R.drawable.ic_arrow_left, "رجوع") { close() }.apply {
+        bar.addView(ctx.iconButton(R.drawable.ic_arrow_left, Strings.back) { close() }.apply {
             (layoutParams as LinearLayout.LayoutParams).marginStart = 0
+            // Right-to-left: the arrow points the other way, like the text.
+            if (ctx.uiDirection() == View.LAYOUT_DIRECTION_RTL) scaleX = -1f
         })
         val texts = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -631,6 +656,7 @@ class NativePlayer(
         val ctx = activity
         val b = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
+            layoutDirection = ctx.uiDirection()
             gravity = Gravity.CENTER
             setPadding(ctx.dp(16), 0, ctx.dp(18), 0)
             background = rounded(Color.WHITE, 999f)
@@ -641,8 +667,9 @@ class NativePlayer(
             })
             addView(ctx.label(Strings.nextEpisode, 14f, Color.BLACK, bold = true))
         }
-        root.addView(b, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ctx.dp(42), Gravity.BOTTOM or Gravity.END).apply {
-            setMargins(0, 0, ctx.dp(28), ctx.dp(96))
+        root.addView(b, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ctx.dp(42), Gravity.BOTTOM or side(Gravity.END)).apply {
+            marginEnd = ctx.dp(28)
+            bottomMargin = ctx.dp(96)
         })
         nextButton = b
     }
@@ -651,6 +678,7 @@ class NativePlayer(
         val ctx = activity
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
+            layoutDirection = ctx.uiDirection()
             gravity = Gravity.CENTER
             setPadding(ctx.dp(18), ctx.dp(12), ctx.dp(20), ctx.dp(12))
             background = rounded(Color.argb(175, 0, 0, 0), 999f)
@@ -669,9 +697,10 @@ class NativePlayer(
         val ctx = activity
         val b = ctx.iconButton(R.drawable.ic_lock_open, Strings.unlock) { setLocked(false) }.apply {
             background = rounded(Color.argb(150, 0, 0, 0), 999f)
+            layoutDirection = ctx.uiDirection()
             visibility = View.GONE
         }
-        root.addView(b, FrameLayout.LayoutParams(ctx.dp(56), ctx.dp(56), Gravity.CENTER_VERTICAL or Gravity.START).apply {
+        root.addView(b, FrameLayout.LayoutParams(ctx.dp(56), ctx.dp(56), Gravity.CENTER_VERTICAL or side(Gravity.START)).apply {
             marginStart = ctx.dp(32)
         })
         unlockButton = b
@@ -687,8 +716,8 @@ class NativePlayer(
         (box.layoutParams as FrameLayout.LayoutParams).let { lp ->
             if (lp.gravity != gravity) {
                 lp.gravity = gravity
-                lp.marginStart = if (gravity and Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK == Gravity.START) activity.dp(72) else 0
-                lp.marginEnd = if (gravity and Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK == Gravity.END) activity.dp(72) else 0
+                lp.leftMargin = if (gravity and Gravity.HORIZONTAL_GRAVITY_MASK == Gravity.LEFT) activity.dp(72) else 0
+                lp.rightMargin = if (gravity and Gravity.HORIZONTAL_GRAVITY_MASK == Gravity.RIGHT) activity.dp(72) else 0
                 box.layoutParams = lp
             }
         }
@@ -844,7 +873,8 @@ class NativePlayer(
             flash(
                 if (forward) R.drawable.ic_fast_forward else R.drawable.ic_rewind,
                 (if (forward) "+" else "−") + Strings.seconds(totalSec),
-                (if (forward) Gravity.END else Gravity.START) or Gravity.CENTER_VERTICAL,
+                // The side that was tapped (forward is the right third in every language).
+                (if (forward) Gravity.RIGHT else Gravity.LEFT) or Gravity.CENTER_VERTICAL,
             )
         }
 
@@ -1051,6 +1081,7 @@ class NativePlayer(
         p.row(Strings.noSubtitles, selected = activeExtId == null && embeddedSelected == null) {
             userPickedSub = true
             selectOff()
+            reportSubChoice(off = true)
         }
 
         // Embedded tracks.
@@ -1069,6 +1100,7 @@ class NativePlayer(
                 ) {
                     userPickedSub = true
                     selectEmbedded(t)
+                    reportSubChoice(off = false, lang = f.language)
                 }
             }
         }
@@ -1085,6 +1117,7 @@ class NativePlayer(
                 ) {
                     userPickedSub = true
                     selectExternal(s)
+                    reportSubChoice(off = false, lang = s.lang)
                 }
             }
         }
@@ -1137,6 +1170,7 @@ class NativePlayer(
                     ) {
                         userPickedSub = true
                         selectExternal(s)
+                        reportSubChoice(off = false, lang = s.lang)
                     }
                 }
             }
@@ -1147,6 +1181,14 @@ class NativePlayer(
             emit(JSONObject().put("type", "subSearch").toString())
             renderSubs("tracks")
         }
+    }
+
+    /** The viewer's own choice in this panel (not an automatic pick), so the page can remember
+     *  "subtitles off" or the language for this title. */
+    private fun reportSubChoice(off: Boolean, lang: String? = null) {
+        val e = JSONObject().put("type", "subsChoice").put("off", off)
+        if (!off && !lang.isNullOrBlank()) e.put("lang", lang)
+        emit(e.toString())
     }
 
     private fun loadShownLangs(order: List<String>): MutableSet<String> {
@@ -1297,7 +1339,7 @@ class NativePlayer(
     /** Automatic choice: the best addon subtitle in a preferred language, unless an embedded
      *  track in an equally (or more) preferred language is already showing. */
     private fun maybeAutoSelectSub() {
-        if (userPickedSub || autoSubDone || prefSubLangs.isEmpty()) return
+        if (userPickedSub || autoSubDone || subsOff || prefSubLangs.isEmpty()) return
         val p = player ?: return
         if (p.currentTracks.isEmpty) return
         val embeddedRank = selectedEmbedded(p)?.let { prefRank(it.group.getTrackFormat(it.index).language) } ?: 999

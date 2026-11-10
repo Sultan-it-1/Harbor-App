@@ -10,16 +10,22 @@ on:
       - "index.html"
       - "package.json"
       - "pnpm-lock.yaml"
+      - "vite.config.ts"
+      - "tsconfig*.json"
+      - "scripts/**"
+      - "tests/**"
       - ".github/workflows/android-build.yml"
 
 permissions:
   contents: write
 
-# One build per branch at a time: a newer push replaces one still running, so two builds of the
-# same branch can't race to publish.
+# One build per branch at a time, so two builds of the same branch can't race to publish. On other
+# branches a newer push replaces the one still running. On main a running build is never cut off
+# (stopped halfway through "Publish release" it would leave a release without its APK); the next
+# one waits for it.
 concurrency:
   group: android-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   apk:
@@ -132,14 +138,21 @@ jobs:
 
       # One release a version: pushing without changing package.json's version only builds (the
       # APK is kept with the run below); a new version on main is published as v<version>.
+      # "Released" means the release has its files: one left without the APK or latest.json (a run
+      # that stopped while publishing) is published again instead of being skipped for good.
       - name: Is this version new?
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "v$HARBOR_VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            echo "v$HARBOR_VERSION is already released: nothing published (raise the version to release)."
-            echo "HARBOR_PUBLISH=false" >> "$GITHUB_ENV"
+          if ASSETS=$(gh release view "v$HARBOR_VERSION" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2> /dev/null); then
+            if printf '%s\n' "$ASSETS" | grep -qx 'harbor-android.apk' && printf '%s\n' "$ASSETS" | grep -qx 'latest.json'; then
+              echo "v$HARBOR_VERSION is already released: nothing published (raise the version to release)."
+              echo "HARBOR_PUBLISH=false" >> "$GITHUB_ENV"
+            else
+              echo "::warning::v$HARBOR_VERSION exists but is missing harbor-android.apk or latest.json: publishing its files now."
+              echo "HARBOR_PUBLISH=true" >> "$GITHUB_ENV"
+            fi
           else
             echo "HARBOR_PUBLISH=true" >> "$GITHUB_ENV"
           fi

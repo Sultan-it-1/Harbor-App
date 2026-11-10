@@ -1,3 +1,4 @@
+import { isAndroidApp } from "@/lib/android";
 import { normalizeRoomCode } from "./protocol";
 import { isRetiredRelay } from "./relay-version";
 
@@ -13,6 +14,10 @@ export function buildInviteUrl(relayUrl: string, roomCode: string): string {
   const params = new URLSearchParams();
   params.set(RELAY_PARAM, relayUrl);
   params.set(ROOM_PARAM, roomCode.toUpperCase());
+  // In the Android app the page's own address (https://appassets.androidplatform.net) only
+  // exists inside the app: sent to someone, it opens an error page. The invite there is an app
+  // link instead. It is pasted into Watch Together, which reads what follows the "?".
+  if (isAndroidApp()) return `harbor://join?${params.toString()}`;
   return `${window.location.origin}/?${params.toString()}`;
 }
 

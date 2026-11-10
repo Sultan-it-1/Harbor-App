@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isAndroidApp } from "@/lib/android";
 
 export const BUNDLED_SERVER_URL = "http://127.0.0.1:11470";
 const PROBE_TIMEOUT_MS = 1500;
@@ -106,6 +107,8 @@ export async function probeStremioServer(force = false, base?: string): Promise<
 }
 
 async function httpProbe(force: boolean, base: string): Promise<boolean> {
+  // The Android app has no bundled server: nothing of ours listens on this phone's port 11470.
+  if (isAndroidApp() && base === BUNDLED_SERVER_URL) return false;
   if (!force && probeCache && probeCache.base === base && Date.now() - probeCache.at < PROBE_TTL_MS) {
     return probeCache.ok;
   }

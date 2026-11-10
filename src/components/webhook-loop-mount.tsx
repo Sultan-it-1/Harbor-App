@@ -65,7 +65,13 @@ export function WebhookLoopMount() {
           return null;
         }
       })();
-      const last = raw ? (JSON.parse(raw) as { at?: number }).at ?? 0 : 0;
+      // A damaged entry counts as "never ran": the check below then runs now.
+      let last = 0;
+      try {
+        last = raw ? (JSON.parse(raw) as { at?: number } | null)?.at ?? 0 : 0;
+      } catch {
+        last = 0;
+      }
       if (Date.now() - last > TICK_INTERVAL_MS) void tick();
     };
     window.addEventListener("focus", onFocus);

@@ -40,6 +40,7 @@ class DownloadService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        Strings.load(this)
         downloads = Downloads.get(applicationContext)
         createChannel(this)
     }
@@ -112,23 +113,16 @@ class DownloadService : Service() {
         setContentIntent(openDownloads(this@DownloadService))
         if (s.active == 0) {
             setContentTitle("Harbor")
-            setContentText("يجهّز التحميلات…")
+            setContentText(Strings.preparingDownloads)
             setProgress(0, 0, true)
         } else {
-            setContentTitle("جارٍ تحميل ${countText(s.active)}")
+            setContentTitle(Strings.downloadingFiles(s.active))
             val pct = s.percent()
-            val size = if (s.total > 0) "${fmtSize(s.received)} من ${fmtSize(s.total)}" else fmtSize(s.received)
+            val size = if (s.total > 0) Strings.sizeOf(fmtSize(s.received), fmtSize(s.total)) else fmtSize(s.received)
             setContentText(s.note ?: listOfNotNull(pct?.let { "$it%" }, size.ifBlank { null }).joinToString(" · "))
             setProgress(100, pct ?: 0, pct == null)
         }
     }.build()
-
-    private fun countText(n: Int) = when {
-        n == 1 -> "ملف واحد"
-        n == 2 -> "ملفين"
-        n in 3..10 -> "$n ملفات"
-        else -> "$n ملف"
-    }
 
     private fun fmtSize(b: Long): String = when {
         b <= 0 -> ""
@@ -185,8 +179,8 @@ class DownloadService : Service() {
             val n = NotificationCompat.Builder(ctx, CHANNEL)
                 .setSmallIcon(R.drawable.ic_download)
                 .setColor(HarborColors.ACCENT)
-                .setContentTitle("توقفت التحميلات مؤقتاً")
-                .setContentText("اضغط لمتابعة التحميلات من حيث وقفت")
+                .setContentTitle(Strings.downloadsPaused)
+                .setContentText(Strings.tapToContinueDownloads)
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setContentIntent(openDownloads(ctx))
@@ -210,8 +204,8 @@ class DownloadService : Service() {
             val n = NotificationCompat.Builder(ctx, CHANNEL)
                 .setSmallIcon(R.drawable.ic_download)
                 .setColor(HarborColors.ACCENT)
-                .setContentTitle(if (ok) "اكتمل التحميل" else "تعذّر التحميل")
-                .setContentText(if (ok) title else "$title · افتح التحميلات واضغط إعادة المحاولة")
+                .setContentTitle(if (ok) Strings.downloadFinished else Strings.downloadFailed)
+                .setContentText(if (ok) title else Strings.downloadFailedHint(title))
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setContentIntent(openDownloads(ctx))
@@ -225,13 +219,28 @@ class DownloadService : Service() {
         fun createChannel(ctx: Context) {
             if (Build.VERSION.SDK_INT < 26) return
             val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
-            if (nm.getNotificationChannel(CHANNEL) != null) return
+            // Creating a channel that exists only renames it (the app's language changed); what
+            // the user set for it in Android's settings stays.
+            val name = Strings.downloadsChannel
+            if (nm.getNotificationChannel(CHANNEL)?.name?.toString() == name) return
             nm.createNotificationChannel(
-                NotificationChannel(CHANNEL, "التحميلات", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "تقدّم التحميلات اللي تشتغل في الخلفية"
+                NotificationChannel(CHANNEL, name, NotificationManager.IMPORTANCE_LOW).apply {
+                    description = Strings.downloadsChannelAbout
                     setShowBadge(false)
                 },
             )
+        }
+
+        /** The app's language changed: rename the channel and write the progress card again. */
+        fun languageChanged(ctx: Context) {
+            val app = ctx.applicationContext
+            main.post {
+                createChannel(app)
+                instance?.takeIf { !it.stopping }?.let {
+                    it.lastShown = ""
+                    it.poke()
+                }
+            }
         }
 
         /** Starts the service, or wakes it if it's already running. Any thread; the check
@@ -248,8 +257,9 @@ class DownloadService : Service() {
                 try {
                     ContextCompat.startForegroundService(app, Intent(app, DownloadService::class.java))
                 } catch (_: Exception) {
-                    // In the background without an exemption (Android 12+): nothing to do; the
-                    // system downloader still carries on, just under the normal limits.
+                    // In the background without an exemption (Android 12+): the service can't
+                    // start now. Downloads go on while Android lets the app run, and pick up
+                    // again when Harbor is opened (Downloads.kick).
                 }
             }
         }

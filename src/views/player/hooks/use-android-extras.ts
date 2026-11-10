@@ -2,7 +2,8 @@ import { useEffect, useRef } from "react";
 import { androidApi, isAndroidApp, onNativePlayerEvent } from "@/lib/android";
 import { peekPickerCache } from "@/lib/picker-cache";
 import type { ScoredStream } from "@/lib/streams/types";
-import type { PlayerSrc, PlayEpisode } from "@/lib/view";
+import type { PlayerSrc, PlayerStreamRef, PlayEpisode } from "@/lib/view";
+import { t } from "@/lib/i18n";
 import { badgeLabel, streamBadges } from "@/components/format-badge";
 import { streamKey } from "@/components/player/stream-switcher/switcher-row";
 import { qualityKey, QUALITY_LABEL } from "@/components/player/stream-switcher/quality";
@@ -17,8 +18,21 @@ function send(cmd: Record<string, unknown>) {
   androidApi()?.command(JSON.stringify(cmd));
 }
 
+/**
+ * Is this the stream that is playing? Told by what the player remembers of it (its torrent,
+ * or its addon and title): the playing URL is the resolved link, which is rarely the addon's
+ * own URL, so comparing URLs almost never marked a row.
+ */
+function isPlaying(s: ScoredStream, ref: PlayerStreamRef | undefined, liveUrl: string): boolean {
+  if (ref?.infoHash) {
+    return s.infoHash?.toLowerCase() === ref.infoHash.toLowerCase() && (!ref.addonId || s.addonId === ref.addonId);
+  }
+  if (ref?.addonId && ref.title) return !s.infoHash && s.addonId === ref.addonId && s.title === ref.title;
+  return !!s.url && s.url === liveUrl;
+}
+
 /** One row of the native stream list. */
-function toItem(s: ScoredStream, liveUrl: string) {
+function toItem(s: ScoredStream, ref: PlayerStreamRef | undefined, liveUrl: string) {
   const name = clean(s.name?.trim() || s.addonName || "Source").join(" · ");
   const lines = clean(s.title?.trim() || s.description?.trim() || "");
   // Addons often put size / seeders in the title already; only add what's missing.
@@ -40,7 +54,7 @@ function toItem(s: ScoredStream, liveUrl: string) {
     badges: streamBadges(s).filter((b) => b !== "no-label" && b !== "unknown").slice(0, 4).map(badgeLabel).join(" · "),
     quality: QUALITY_LABEL[q] ?? q,
     cached: Object.values(s.cached ?? {}).some(Boolean),
-    current: !!s.url && s.url === liveUrl,
+    current: isPlaying(s, ref, liveUrl),
   };
 }
 
@@ -52,6 +66,8 @@ function toItem(s: ScoredStream, liveUrl: string) {
 export function useAndroidPlayerExtras(params: {
   src: PlayerSrc;
   liveUrl: string;
+  /** What the player remembers of the stream that is playing (marks its row in the list). */
+  streamRef: PlayerStreamRef | undefined;
   /** "4K · Dolby Vision · TrueHD 7.1" from the stream's name (the player shows what it
    *  actually decodes once it knows; this is the first guess). */
   quality: string | null;
@@ -96,14 +112,14 @@ export function useAndroidPlayerExtras(params: {
         );
         send({
           cmd: "streams",
-          items: all.slice(0, 150).map((s) => toItem(s, cur.liveUrl)),
-          message: all.length === 0 ? "ما فيه قائمة مصادر لهذا العنوان (افتحه من صفحته واختر مصدر)." : "",
+          items: all.slice(0, 150).map((s) => toItem(s, cur.streamRef, cur.liveUrl)),
+          message: all.length === 0 ? t("There is no source list for this title (open it from its page and pick a source).") : "",
         });
       } else if (e.type === "pickStream") {
         const cache = peekPickerCache(cur.src.meta, cur.src.episode);
         const stream = cache?.result.picker.all.find((s) => streamKey(s) === e.key);
         if (!stream) {
-          send({ cmd: "streamFailed", key: e.key, message: "المصدر ما عاد متوفر" });
+          send({ cmd: "streamFailed", key: e.key, message: t("This source is no longer available") });
           return;
         }
         pendingRef.current = { key: e.key, url: cur.liveUrl };

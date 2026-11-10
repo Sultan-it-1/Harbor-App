@@ -302,6 +302,7 @@ export function PlayerView({ src }: { src: PlayerSrc }) {
   useAndroidPlayerExtras({
     src,
     liveUrl,
+    streamRef: liveStreamRef ?? src.streamRef,
     quality: liveStreamRef?.quality ?? src.streamRef?.quality ?? null,
     swapResolvingKey,
     onSwitchStream,

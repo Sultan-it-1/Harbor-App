@@ -13,6 +13,7 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         try {
+            Strings.load(context)
             if (Downloads.pendingAtBoot(context) > 0) DownloadService.notifyPaused(context)
         } catch (_: Exception) {
         }
