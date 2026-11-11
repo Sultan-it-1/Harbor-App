@@ -1,12 +1,7 @@
 import { fetchAddonCatalogPage, normalizeName, type AddonRow } from "@/lib/addons";
 import { topMovies, topSeries, type Meta } from "@/lib/cinemeta";
-import {
-  jikanNewReleases,
-  jikanTopAiring,
-  jikanTopPopular,
-  jikanUpcoming,
-  stripFranchiseSuffix,
-} from "@/lib/providers/jikan";
+import { animeAiringNow, animeMostPopular, animeNewReleases, animeUpcoming } from "@/lib/anilist/catalog";
+import { stripFranchiseSuffix } from "@/lib/providers/jikan";
 import { tmdbMovieRow, tmdbSeriesRow, tmdbTrending } from "@/lib/providers/tmdb";
 import { type Settings } from "@/lib/settings";
 import type { HomeRow, RowSpec } from "./home-types";
@@ -151,10 +146,11 @@ export async function buildAnimeHomeRows(): Promise<HomeRow[]> {
   };
   try {
     const [airing, newest, popular, upcoming] = await Promise.all([
-      fetchMany(jikanTopAiring, 3),
-      fetchMany(jikanNewReleases, 3),
-      fetchMany(jikanTopPopular, 3),
-      fetchMany(jikanUpcoming, 3),
+      // AniList: Jikan (MyAnimeList's public API) closed on 1 October 2026.
+      fetchMany(animeAiringNow, 3),
+      fetchMany(animeNewReleases, 3),
+      fetchMany(animeMostPopular, 3),
+      fetchMany(animeUpcoming, 3),
     ]);
     const out: HomeRow[] = [];
     if (airing.length >= 6) {

@@ -31,7 +31,7 @@ export function PrivacyRow() {
       />
       <ToggleRow
         label={t("Look up intro and credits times")}
-        sub={t("For the skip buttons, the title's IMDb/TMDB id, season and episode are sent to TheIntroDB, and anime episodes to AniSkip. Turn off to send nothing.")}
+        sub={t("For the skip buttons, the title's IMDb/TMDB id, season, episode and length are sent to TheIntroDB, SkipDB and introdb.app, and anime episodes to AniSkip (with ani.zip to match their ids). Turn off to send nothing.")}
         value={settings.skipLookups !== false}
         onChange={(v) => update({ skipLookups: v })}
       />

@@ -43,18 +43,28 @@ export function useApiSortedAddons(o: { mode: "top" | "new"; category: string | 
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [exhausted, setExhausted] = useState(false);
+  // A page that could not be fetched. Nothing loads by itself while this is set (the list would
+  // ask again and again), until [retry].
+  const [failed, setFailed] = useState(false);
   const seenRef = useRef<Set<string>>(new Set());
+  // Counts filter changes: a page still on its way when the filter changes belongs to the old
+  // list and is dropped when it arrives.
+  const filterRef = useRef(0);
 
   useEffect(() => {
+    filterRef.current++;
     seenRef.current = new Set();
     setItems([]);
     setPage(1);
     setExhausted(false);
+    setFailed(false);
+    setLoading(false);
   }, [mode, category, search, allowAdult]);
 
-  const loadMore = useCallback(async () => {
-    if (loading || exhausted || !enabled) return;
+  const fetchPage = useCallback(async () => {
+    const filter = filterRef.current;
     setLoading(true);
+    setFailed(false);
     try {
       const res = await listAddons({
         page,
@@ -65,6 +75,7 @@ export function useApiSortedAddons(o: { mode: "top" | "new"; category: string | 
         ...(category ? { category } : {}),
         ...(search ? { search } : {}),
       });
+      if (filter !== filterRef.current) return;
       const fresh = res.addons.filter((a) => {
         if (seenRef.current.has(a.uuid)) return false;
         seenRef.current.add(a.uuid);
@@ -74,16 +85,26 @@ export function useApiSortedAddons(o: { mode: "top" | "new"; category: string | 
       if (!res.pagination.hasNextPage) setExhausted(true);
       else setPage((p) => p + 1);
     } catch {
-      setExhausted(true);
+      // Not the end of the list: the same page can be asked for again.
+      if (filter === filterRef.current) setFailed(true);
     } finally {
-      setLoading(false);
+      if (filter === filterRef.current) setLoading(false);
     }
-  }, [mode, page, loading, exhausted, category, search, allowAdult, enabled]);
+  }, [mode, page, category, search, allowAdult]);
+
+  const loadMore = useCallback(async () => {
+    if (loading || exhausted || failed || !enabled) return;
+    await fetchPage();
+  }, [loading, exhausted, failed, enabled, fetchPage]);
+  const retry = useCallback(async () => {
+    if (loading || exhausted || !enabled) return;
+    await fetchPage();
+  }, [loading, exhausted, enabled, fetchPage]);
 
   useEffect(() => {
     if (items.length === 0 && !loading && !exhausted) void loadMore();
   }, [items.length, loading, exhausted, loadMore]);
-  return { items, loading, exhausted, loadMore };
+  return { items, loading, exhausted, failed, loadMore, retry };
 }
 
 function ApiSortedList({
@@ -104,7 +125,7 @@ function ApiSortedList({
   onChange?: () => void;
 }) {
   const t = useT();
-  const { items, loading, exhausted, loadMore } = useApiSortedAddons({ mode, category, search, allowAdult });
+  const { items, loading, exhausted, failed, loadMore, retry } = useApiSortedAddons({ mode, category, search, allowAdult });
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const rising = useRising();
 
@@ -146,6 +167,18 @@ function ApiSortedList({
       {loading && items.length > 0 && (
         <div className="flex items-center justify-center py-4 text-ink-subtle">
           <Loader2 size={18} className="animate-spin" />
+        </div>
+      )}
+      {failed && !loading && (
+        <div className="flex flex-col items-center gap-2.5 py-4 text-center">
+          <p className="text-[12.5px] text-ink-muted">{t("Couldn't load the addons. Check your connection.")}</p>
+          <button
+            type="button"
+            onClick={() => void retry()}
+            className="flex h-9 items-center rounded-full bg-raised px-4 text-[12.5px] font-semibold text-ink-muted transition-colors hover:bg-elevated hover:text-ink"
+          >
+            {t("Try again")}
+          </button>
         </div>
       )}
       {exhausted && items.length > 0 && (

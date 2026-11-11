@@ -1,6 +1,7 @@
 import { androidApi, onNativePlayerEvent } from "@/lib/android";
 import { emptySnapshot, type PlayerBridge, type PlayerSnapshot } from "../bridge";
 import { uiLocale } from "@/lib/i18n/locale";
+import { readPlayerPrefs, writePlayerPrefs } from "@/lib/player-prefs";
 
 const MAX_INITIAL_SUBS = 20;
 const SUB_BATCH_MS = 700;
@@ -72,6 +73,26 @@ function preferredSubLangs(): string[] {
   }
 }
 
+/** "tt123|1|2" (title | season | episode) -> the title's id, which the per-title choices are kept under. */
+function metaIdOf(contentKey: string): string {
+  return contentKey.split("|")[0] ?? "";
+}
+
+/**
+ * Should this title start with subtitles off? The viewer's own choice for the title, else
+ * Settings > "subtitles off by default" (the rule the other players use).
+ */
+function startSubsOff(contentKey: string): boolean {
+  const prefs = readPlayerPrefs(metaIdOf(contentKey));
+  if (prefs?.subsOff != null) return prefs.subsOff;
+  try {
+    const raw = localStorage.getItem("harbor.settings");
+    return raw ? (JSON.parse(raw) as { subtitlesOffByDefault?: unknown }).subtitlesOffByDefault === true : false;
+  } catch {
+    return false;
+  }
+}
+
 /** Settings > Language > preferred audio languages, as codes for the native player. */
 function preferredAudioLangs(): string[] {
   try {
@@ -122,6 +143,59 @@ function nativeSub(url: string, lang?: string, rawTitle?: string): NativeSub {
   return { url, lang: lang ? toLangCode(lang) : undefined, label: label ?? undefined };
 }
 
+// The exact addon subtitle the viewer picked for an episode, kept per content key
+// (title | season | episode), so the same one comes back the next time that episode plays.
+// The native player can show a second subtitle together with the first; that one is kept the
+// same way under a key of its own.
+const SUB_MEMORY_KEY = "harbor.subtitle.memory.v1";
+const SUB2_MEMORY_KEY = "harbor.subtitle.memory2.v1";
+const SUB_MEMORY_MAX = 500;
+type RememberedSub = NativeSub & { at: number };
+
+function readSubMemory(storageKey: string): Record<string, RememberedSub> {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, RememberedSub>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The subtitle remembered for this episode, in the shape the native player takes. */
+function rememberedSub(contentKey: string, storageKey = SUB_MEMORY_KEY): NativeSub | null {
+  if (!contentKey) return null;
+  const hit = readSubMemory(storageKey)[contentKey];
+  if (!hit || typeof hit.url !== "string" || !hit.url) return null;
+  return {
+    url: hit.url,
+    lang: typeof hit.lang === "string" && hit.lang ? hit.lang : undefined,
+    label: typeof hit.label === "string" && hit.label ? hit.label : undefined,
+  };
+}
+
+/** Remembers the pick for this episode; null forgets it. Only the newest entries are kept. */
+function rememberSub(contentKey: string, sub: NativeSub | null, storageKey = SUB_MEMORY_KEY) {
+  if (!contentKey) return;
+  try {
+    const all = readSubMemory(storageKey);
+    if (!sub) {
+      if (!(contentKey in all)) return;
+      delete all[contentKey];
+    } else {
+      all[contentKey] = { url: sub.url, lang: sub.lang, label: sub.label, at: Date.now() };
+    }
+    const entries = Object.entries(all);
+    const kept =
+      entries.length > SUB_MEMORY_MAX
+        ? Object.fromEntries(entries.sort((a, b) => (b[1]?.at ?? 0) - (a[1]?.at ?? 0)).slice(0, SUB_MEMORY_MAX))
+        : all;
+    localStorage.setItem(storageKey, JSON.stringify(kept));
+  } catch {
+    /* storage full or unavailable: the pick just isn't remembered */
+  }
+}
+
 /** Plays through the Android shell's native ExoPlayer (FFmpeg audio decoders included). */
 /** Lets the native player say "no subtitles found" instead of staying silent. */
 export function notifyAndroidSubSearch(found: number, manual = false) {
@@ -157,6 +231,27 @@ export function createAndroidBridge(): PlayerBridge {
 
   const off = onNativePlayerEvent((e) => {
     if (!active || owner !== token) return;
+    if (e.type === "subsChoice") {
+      // Remembered for the title, as the other players do: "off" stays off next time, and a
+      // subtitle picked by hand turns them back on for it.
+      const id = metaIdOf(lastContentKey);
+      if (id) writePlayerPrefs(id, e.off ? { subsOff: true } : { subsOff: false, ...(e.lang ? { subLang: e.lang } : {}) });
+      // "Off", or a track inside the file: the addon subtitle remembered for this episode no
+      // longer stands. (A pick from the addons says so itself right after, with subPicked.)
+      rememberSub(lastContentKey, null);
+      return;
+    }
+    if (e.type === "subPicked") {
+      if (e.url) rememberSub(lastContentKey, { url: e.url, lang: e.lang, label: e.label });
+      return;
+    }
+    if (e.type === "sub2Picked") {
+      // The second subtitle is the native player's own business (it says so when "No subtitles"
+      // or a change of the first takes it away); the page only keeps it for this episode.
+      const picked = !e.off && e.url ? { url: e.url, lang: e.lang, label: e.label } : null;
+      rememberSub(lastContentKey, picked, SUB2_MEMORY_KEY);
+      return;
+    }
     if (e.type === "state") {
       snap.positionSec = e.positionMs / 1000;
       snap.durationSec = e.durationMs / 1000;
@@ -216,6 +311,25 @@ export function createAndroidBridge(): PlayerBridge {
         lastContentKey = src.contentKey;
         lastDownloadId = src.downloadId ?? "";
       }
+      const contentKey = src.contentKey ?? lastContentKey;
+      const subsOff = startSubsOff(contentKey);
+      // The subtitle picked for this episode last time: the native player puts it back in place
+      // of its automatic choice. It has to be in the list it is given (it may sit past the first
+      // few, or come from a search that has not run yet). Not when subtitles start off. A
+      // subtitle saved on the phone is not added here: the player lists the files that are
+      // really there, and one whose download was deleted must not come back as a dead row.
+      const restoreSub = !subsOff && src.isLive !== true ? rememberedSub(contentKey) : null;
+      if (restoreSub && !sentSubUrls.has(restoreSub.url) && !/^file:/i.test(restoreSub.url)) {
+        sentSubUrls.add(restoreSub.url);
+        initialSubs.push(restoreSub);
+      }
+      // The second subtitle shown with it last time, by the same rules: the player puts it back
+      // once there is a first one to show it next to.
+      const restoreSub2 = !subsOff && src.isLive !== true ? rememberedSub(contentKey, SUB2_MEMORY_KEY) : null;
+      if (restoreSub2 && !sentSubUrls.has(restoreSub2.url) && !/^file:/i.test(restoreSub2.url)) {
+        sentSubUrls.add(restoreSub2.url);
+        initialSubs.push(restoreSub2);
+      }
       api?.play(
         JSON.stringify({
           url: src.url,
@@ -227,8 +341,11 @@ export function createAndroidBridge(): PlayerBridge {
           subStyle: harborSubStyle(),
           title,
           isLive: src.isLive === true,
-          contentKey: src.contentKey ?? lastContentKey,
+          contentKey,
           downloadId: src.contentKey != null ? (src.downloadId ?? "") : lastDownloadId,
+          subsOff,
+          ...(restoreSub ? { restoreSub } : {}),
+          ...(restoreSub2 ? { restoreSub2 } : {}),
         }),
       );
     },

@@ -275,6 +275,7 @@ const addons: Record<string, string> = {
   "Power tools": "أدوات احترافية",
   "Quality-of-life upgrades. Sync, ratings, trailers.": "تحسينات لجودة الاستخدام. مزامنة وتقييمات ومقاطع دعائية.",
   "NSFW. Hidden until enabled.": "محتوى للبالغين. مخفي حتى يُفعّل.",
+  "Couldn't load the addons. Check your connection.": "تعذّر تحميل الإضافات. تحقق من اتصالك.",
 };
 
 export default addons;

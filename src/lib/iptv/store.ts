@@ -29,7 +29,9 @@ function sourceSig(src: IptvPlaylistSource): string {
 async function readSnapshot(src: IptvPlaylistSource): Promise<IptvPlaylist | null> {
   const snap = await idbGet<Snapshot>(SNAPSHOT_PREFIX + src.id);
   if (!snap || snap.sig !== sourceSig(src) || !snap.playlist || !Array.isArray(snap.playlist.channels)) return null;
-  return { ...snap.playlist, name: src.name, epgUrl: src.epgUrl ?? null };
+  // The user's own guide URL wins; otherwise keep the one read from the playlist's header
+  // when this copy was fetched (the saved channels alone no longer carry that header).
+  return { ...snap.playlist, name: src.name, epgUrl: src.epgUrl || snap.playlist.epgUrl || null };
 }
 
 function writeSnapshot(src: IptvPlaylistSource, playlist: IptvPlaylist): void {

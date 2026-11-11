@@ -100,6 +100,10 @@ function errorText(d: DownloadItem, t: TFn): string {
       return t("Keeps failing. Tap retry.");
     case "save_failed":
       return t("Couldn't save the file");
+    case "placeholder":
+      // The source answered with its short "not ready" clip instead of the video (refused by
+      // the app's downloader, or found here on a file an older version saved as finished).
+      return t("This source wasn't ready: it sent a short placeholder, not the video. Delete it and pick another source.");
   }
   return t("Failed: {error}", { error: d.error ? t(d.error) : t("Download failed") });
 }

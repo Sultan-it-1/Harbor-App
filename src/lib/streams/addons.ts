@@ -2,6 +2,7 @@ import { safeFetch as fetch } from "@/lib/safe-fetch";
 import type { Addon } from "@/lib/addons";
 import { dlog, dwarn } from "@/lib/debug";
 import { isAddonRanked, isStatusOnlyAddon } from "./addon-detect";
+import { streamKey } from "./identity";
 import type { Stream } from "./types";
 
 const TIMEOUT_MS_FAST = 8000;
@@ -189,13 +190,18 @@ async function fetchOne(
   }
 }
 
+// Two rows are the same result only when the same installation of an addon points at the
+// same playback target. So:
+//  - one addon may list several play URLs for one torrent (a season pack where each URL is
+//    a different file, or one hash on two debrid accounts): each stays its own row;
+//  - two installations of one addon (same manifest id, different configuration URL, e.g.
+//    Torrentio once per debrid service) each keep their own rows.
 function dedupeStreams(streams: Stream[]): Stream[] {
-  const seen = new Map<string, Stream>();
+  const seen = new Map<string | Stream, Stream>();
   for (const s of streams) {
-    const baseKey = s.infoHash
-      ? `hash:${s.infoHash}:${s.fileIdx ?? ""}`
-      : `url:${s.url ?? s.title ?? s.name ?? Math.random().toString(36)}`;
-    const key = `${s.addonId}:${baseKey}`;
+    const identity = streamKey(s);
+    const key =
+      typeof identity === "string" ? JSON.stringify([s.addonUrl, s.addonId, identity]) : identity;
     const prior = seen.get(key);
     if (!prior) {
       seen.set(key, s);

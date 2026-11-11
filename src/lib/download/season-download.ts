@@ -1,20 +1,22 @@
 // "Download season": for every episode, run the same stream query + ranking the source
 // picker uses, take the best stream that can actually be saved, resolve it (debrid /
-// direct) and queue the download. Runs one episode at a time, and keeps running when you
-// leave the page (or, on Android, the app).
+// direct), check that its link isn't a placeholder and queue the download (best-source.ts).
+// Runs one episode at a time, and keeps running when you leave the page (or, on Android,
+// the app).
 import { useSyncExternalStore } from "react";
 import type { Meta } from "@/lib/cinemeta";
 import type { DebridStore } from "@/lib/debrid/types";
 import type { Settings } from "@/lib/settings";
 import { runPipeline } from "@/lib/streams/pipeline";
-import { resolveStream } from "@/lib/streams/resolve";
 import { buildStreamIds } from "@/lib/streams/stream-ids";
-import type { ScoredStream } from "@/lib/streams/types";
 import { tmdbImdbId } from "@/lib/providers/tmdb";
 import type { PlayEpisode } from "@/lib/view";
+import { readPlayback } from "@/lib/playback-history";
+import { autoPreferredLangs, buildAutoCandidates, instantSource } from "@/views/play-picker/use-auto-candidates";
 import { loadPickerAddons } from "@/views/play-picker/use-addons";
 import { buildPipelineInput } from "@/views/play-picker/use-pipeline-result";
-import { activeDownloadFor, beginBackgroundJob, endBackgroundJob, enqueueDownload } from "./downloads-store";
+import { queueBestDownload } from "./best-source";
+import { activeDownloadFor, beginBackgroundJob, endBackgroundJob } from "./downloads-store";
 import { isAndroidApp, nativeNetworkLooksDown, subscribeNativeNetwork } from "@/lib/android";
 import { readActiveStremioAuthKey } from "@/lib/auth";
 import { buildDebridClients } from "@/lib/debrid/registry";
@@ -29,16 +31,6 @@ export type SeasonDownloadProgress = {
   current: PlayEpisode | null;
   finished: boolean;
 };
-
-const isCached = (s: ScoredStream) => Object.values(s.cached ?? {}).some(Boolean);
-
-/** Streams worth trying for a download, best first: cached on a debrid or a direct link. */
-function downloadCandidates(all: ScoredStream[]): ScoredStream[] {
-  const direct = (s: ScoredStream) => !!s.url && s.url !== "#" && !s.infoHash;
-  const good = all.filter((s) => isCached(s) || direct(s));
-  const rest = all.filter((s) => !good.includes(s));
-  return [...good, ...rest].slice(0, 4);
-}
 
 export async function downloadSeason(opts: {
   meta: Meta;
@@ -59,14 +51,16 @@ export async function downloadSeason(opts: {
     current: null,
     finished: false,
   };
-  const emit = () => onProgress({ ...state, failed: [...state.failed] });
+  // The list can grow while this runs (a second request for the same season adds what is missing).
+  const emit = () => onProgress({ ...state, total: episodes.length, failed: [...state.failed] });
   emit();
 
   const { addons } = await loadPickerAddons(authKey, settings);
   let imdbId: string | null = meta.id.startsWith("tt") ? meta.id : null;
   if (!imdbId && settings.tmdbKey) imdbId = await tmdbImdbId(settings.tmdbKey, meta.id).catch(() => null);
 
-  for (const ep of episodes) {
+  for (let i = 0; i < episodes.length; i++) {
+    const ep = episodes[i];
     if (signal.aborted) break;
     state.current = ep;
     emit();
@@ -96,25 +90,23 @@ export async function downloadSeason(opts: {
           }),
           signal,
         );
-        for (const s of downloadCandidates(result.picker.all)) {
-          if (signal.aborted) break;
-          const r = await resolveStream(s, debrids, signal, true);
-          if (!r.ok) continue;
-          const label =
-            [s.resolution, s.source].filter(Boolean).join(" ") || s.parsedTitle || s.title || s.name || s.addonName || null;
-          await enqueueDownload({
-            meta,
-            episode: ep,
-            streamLabel: label,
-            url: r.data.url,
-            rawUrl: r.data.url,
-            headers: r.data.headers,
-            subtitles: r.data.subtitles,
-            source: s,
-          });
-          ok = true;
-          break;
-        }
+        // In the order "Instant" play would try them for this episode, the first one that is
+        // really ready (cached or direct, and not a placeholder clip).
+        const anime = streamIds.some((id) => id.startsWith("kitsu:") || id.startsWith("mal:"));
+        const streams = buildAutoCandidates({
+          filteredPicker: { all: result.picker.all, primary: result.picker.primary },
+          previousPlayback: settings.rememberLastStream ? readPlayback(meta.id, ep.season, ep.episode) : null,
+          sourceEntry: null,
+          isCached: (s) => instantSource(s, debrids),
+          addons,
+          hasStrongAddon: addons.some((a) => /mediafusion|comet/i.test(a.manifest?.name ?? "")),
+          isTorrentioStream: (s) => /torrentio/i.test(s.addonName ?? ""),
+          preferredLangs: autoPreferredLangs(settings.preferredLanguages ?? [], settings.preferredAudioLangs ?? [], anime),
+          season: anime ? null : (ep.imdbSeason ?? ep.season ?? null),
+          episode: anime ? null : (ep.imdbEpisode ?? ep.episode ?? null),
+        });
+        const queued = await queueBestDownload({ meta, episode: ep, streams, debrids, signal });
+        ok = queued.ok;
       }
     } catch (e) {
       if (signal.aborted) break;
@@ -138,6 +130,8 @@ type SeasonJob = {
   key: string;
   title: string;
   season: number | null;
+  /** The queue the job walks through; a second request for the same season appends to it. */
+  episodes: PlayEpisode[];
   progress: SeasonDownloadProgress;
   ac: AbortController;
 };
@@ -242,15 +236,29 @@ export function startSeasonDownload(
   opts: Omit<Parameters<typeof downloadSeason>[0], "signal" | "onProgress">,
 ): void {
   const cur = jobs.get(key);
-  if (cur && !cur.progress.finished) return;
-  saveJob(key, opts.meta, opts.episodes);
+  if (cur && !cur.progress.finished) {
+    // The season is already being worked on (the key is the title and season, not the exact
+    // list): add the episodes the running job doesn't have, instead of dropping the request.
+    const missing = opts.episodes.filter(
+      (e) => !cur.episodes.some((x) => x.season === e.season && x.episode === e.episode),
+    );
+    if (missing.length === 0) return;
+    cur.episodes.push(...missing);
+    cur.progress = { ...cur.progress, total: cur.episodes.length };
+    saveJob(key, opts.meta, cur.episodes.slice(cur.progress.done));
+    notifyJobs();
+    return;
+  }
+  const episodes = [...opts.episodes];
+  saveJob(key, opts.meta, episodes);
   const ac = new AbortController();
   const job: SeasonJob = {
     key,
     title: opts.meta.name ?? "",
-    season: opts.episodes[0]?.season ?? null,
+    season: episodes[0]?.season ?? null,
+    episodes,
     ac,
-    progress: { total: opts.episodes.length, done: 0, queued: 0, skipped: 0, failed: [], current: null, finished: false },
+    progress: { total: episodes.length, done: 0, queued: 0, skipped: 0, failed: [], current: null, finished: false },
   };
   jobs.set(key, job);
   notifyJobs();
@@ -258,11 +266,12 @@ export function startSeasonDownload(
   beginBackgroundJob(bgKey);
   void downloadSeason({
     ...opts,
+    episodes,
     signal: ac.signal,
     onProgress: (p) => {
       job.progress = p;
       // Episodes handled so far (queued, skipped or failed) are done; keep the rest.
-      saveJob(key, opts.meta, opts.episodes.slice(p.done));
+      saveJob(key, opts.meta, episodes.slice(p.done));
       notifyJobs();
     },
   })

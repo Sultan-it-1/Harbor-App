@@ -12,6 +12,20 @@
     <!-- Only to post "downloads paused, tap to continue" after a reboot (BootReceiver). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- The player's "Open in another player": Android 11+ hides other apps from this one, so
+         without this it could not tell "no video player is installed" from "there are some".
+         Only apps that open a web video are made visible. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" android:mimeType="video/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="http" android:mimeType="video/*" />
+        </intent>
+    </queries>
+
     <application
         android:label="Harbor"
         android:icon="@mipmap/ic_launcher"

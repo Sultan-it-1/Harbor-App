@@ -20,7 +20,21 @@ import {
 } from "@/lib/player-chrome";
 import { renderControl, type ControlContext } from "./transport/control-renderer";
 
-export function Transport({
+type TransportProps = Parameters<typeof TransportDefault>[0];
+
+/**
+ * Picks the player chrome. The two layouts are separate components: the Stremio one used to be an
+ * early return above the default layout's hooks, so a switch between them mid-playback (PiP, or
+ * the chrome theme changing) changed the number of hooks and crashed the player.
+ */
+export function Transport(props: TransportProps) {
+  const { settings } = useSettings();
+  const isStremioLayout = resolveChromeTheme(settings.theme, settings.playerChromeTheme) === "stremio";
+  if (isStremioLayout && !props.pipMode) return <TransportStremio {...props} />;
+  return <TransportDefault {...props} />;
+}
+
+function TransportDefault({
   snap,
   capabilities,
   visible,
@@ -57,8 +71,6 @@ export function Transport({
   canPickAnother,
   title,
   subtitle,
-  resolution,
-  quality,
   hoverTitle,
   hoverSub,
   hasPrevEp,
@@ -147,70 +159,6 @@ export function Transport({
 }) {
   const t = useT();
   const { settings } = useSettings();
-  const isStremioLayout = resolveChromeTheme(settings.theme, settings.playerChromeTheme) === "stremio";
-  if (isStremioLayout && !pipMode) {
-    return (
-      <TransportStremio
-        snap={snap}
-        capabilities={capabilities}
-        visible={visible}
-        fullscreen={fullscreen}
-        drawMode={drawMode}
-        hideOthersDrawings={hideOthersDrawings}
-        showDraw={showDraw}
-        onBack={onBack}
-        onPlayPause={onPlayPause}
-        onSeek={onSeek}
-        onMute={onMute}
-        onVolume={onVolume}
-        onAudio={onAudio}
-        onSubtitle={onSubtitle}
-        onSubDelay={onSubDelay}
-        onAudioDelay={onAudioDelay}
-        onEnterSync={onEnterSync}
-        onAddSubtitle={onAddSubtitle}
-        onRate={onRate}
-        cropMode={cropMode}
-        onCropMode={onCropMode}
-        anime4kMode={anime4kMode}
-        onAnime4kMode={onAnime4kMode}
-        anime4kAvailable={anime4kAvailable}
-        onPiP={onPiP}
-        onFullscreen={onFullscreen}
-        onCast={onCast}
-        onToggleDraw={onToggleDraw}
-        onToggleHideOthers={onToggleHideOthers}
-        onScreenshot={onScreenshot}
-        onPickAnother={onPickAnother}
-        canPickAnother={canPickAnother}
-        title={title}
-        subtitle={subtitle}
-        resolution={resolution}
-        quality={quality}
-        hasPrevEp={hasPrevEp}
-        hasNextEp={hasNextEp}
-        onPrevEp={onPrevEp}
-        onNextEp={onNextEp}
-        metaImdbId={metaImdbId}
-        metaTitle={metaTitle}
-        metaReleaseDate={metaReleaseDate}
-        meta={meta}
-        tmdbKey={tmdbKey}
-        season={season}
-        episode={episode}
-        engine={engine}
-        useOverlayPopups={useOverlayPopups}
-        onMenuOpenChange={onMenuOpenChange}
-        download={download}
-        onDownloadStart={onDownloadStart}
-        onDownloadCancel={onDownloadCancel}
-        onDownloadReveal={onDownloadReveal}
-        onDownloadReset={onDownloadReset}
-        onOpenDvr={onOpenDvr}
-        sleep={sleep}
-      />
-    );
-  }
   const playing = snap.status === "playing";
   const showEpisodeNav = hasPrevEp || hasNextEp;
   const [audioMenuOpen, setAudioMenuOpen] = useState(false);

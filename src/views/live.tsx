@@ -81,15 +81,18 @@ export function LiveView({ active }: { active: boolean }) {
 
   const [activeId, setActiveId] = useState<string | null>(() => readActiveId());
   useEffect(() => {
-    if (sources.length === 0) {
+    // An EPG-only entry (a guide link, no channels) is not a playlist to open: it used to be
+    // picked when it came first in the list, and the page then failed on its empty link.
+    const playlists = sources.filter((s) => (s.kind ?? "m3u") !== "epg");
+    if (playlists.length === 0) {
       if (activeId !== null) {
         setActiveId(null);
         writeActiveId(null);
       }
       return;
     }
-    if (!activeId || !sources.find((s) => s.id === activeId)) {
-      const fallback = sources[0]?.id ?? null;
+    if (!activeId || !playlists.find((s) => s.id === activeId)) {
+      const fallback = playlists[0]?.id ?? null;
       setActiveId(fallback);
       writeActiveId(fallback);
     }
@@ -115,7 +118,8 @@ export function LiveView({ active }: { active: boolean }) {
     () => sources.filter((s) => s.kind === "epg").map((s) => s.epgUrl || s.url),
     [sources],
   );
-  const { index: baseEpg, error: epgError } = useEpg(active ? activeSource : null, epgOnlyUrls);
+  // No guide URL typed in: use the one the playlist names in its own #EXTM3U header (read when the list was loaded).
+  const { index: baseEpg, error: epgError } = useEpg(active && activeSource ? { ...activeSource, epgUrl: activeSource.epgUrl || (playlist?.id === activeSource.id ? playlist.epgUrl : null) || undefined } : null, epgOnlyUrls);
   const epg = useXtreamEpgFallback(activeSource, playlist?.channels ?? EMPTY_CHANNELS, baseEpg);
   const nowMs = useNowTick(30_000);
 
@@ -223,6 +227,14 @@ export function LiveView({ active }: { active: boolean }) {
     setActiveId(id);
     writeActiveId(id);
   }, []);
+  // Opening a playlist from the picker. An EPG-only entry is listed there to edit or delete
+  // it, not to open.
+  const openPlaylist = useCallback(
+    (id: string) => {
+      if (allSources.some((s) => s.id === id)) selectActive(id);
+    },
+    [allSources, selectActive],
+  );
 
   const { addPlaylist, removePlaylist, editPlaylist, renamePlaylist, reorderPlaylist, movePlaylistTop } =
     usePlaylistMutations({ activeId, setActiveId: selectActive, refresh });
@@ -247,8 +259,9 @@ export function LiveView({ active }: { active: boolean }) {
   const catsLabel =
     group === null ? t("Categories") : group === FAVORITES_GROUP_KEY ? t("Favorites") : group;
 
-  // Android: drawn natively (see ./live/use-native-live). The playlist menu, the categories
-  // drawer and the leagues window are the page's own and open over it while it steps aside.
+  // Android: drawn natively (see ./live/use-native-live). The page's own playlist picker,
+  // categories drawer and leagues window open over it (it steps aside) for what the native
+  // menus below don't cover.
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerRequest, setPickerRequest] = useState(0);
   const [sportsOpen, setSportsOpen] = useState(false);
@@ -259,14 +272,12 @@ export function LiveView({ active }: { active: boolean }) {
   useNativeSheet(
     plSheet ? `live-playlists:${activeId}` : null,
     [
-      ...managedSources.map((src) => ({
+      // The playlists to switch to (EPG-only entries are not among them; "Manage" lists them).
+      ...allSources.map((src) => ({
         id: `pl:${src.id}`,
         label: src.name,
         active: src.id === activeId,
-        onSelect: () => {
-          setActiveId(src.id);
-          writeActiveId(src.id);
-        },
+        onSelect: () => selectActive(src.id),
       })),
       { id: "-", label: "", divider: true },
       {
@@ -363,7 +374,7 @@ export function LiveView({ active }: { active: boolean }) {
     active: active && topKind === "live",
     mode,
     setMode,
-    hasSources: sources.length > 0,
+    hasSources: allSources.length > 0,
     sourceName: managedSources.find((s) => s.id === activeId)?.name ?? t("No playlist"),
     channelCount: playlist?.channels.length ?? 0,
     stateKind: state.kind,
@@ -407,10 +418,7 @@ export function LiveView({ active }: { active: boolean }) {
             sources={managedSources}
             activeId={activeId}
             exportEnabled={!!playlist?.channels.length}
-            onSelect={(id) => {
-              setActiveId(id);
-              writeActiveId(id);
-            }}
+            onSelect={openPlaylist}
             onAdd={addPlaylist}
             onEdit={editPlaylist}
             onRename={renamePlaylist}
@@ -454,7 +462,8 @@ export function LiveView({ active }: { active: boolean }) {
     );
   }
 
-  if (sources.length === 0) {
+  // No playlist to open (none saved, or only EPG-only entries): the "add a playlist" page.
+  if (allSources.length === 0) {
     return (
       <main data-rail-flush className="relative flex min-h-0 flex-1 flex-col overflow-y-auto pt-20">
         <PlaylistEmpty onSave={(entry) => addPlaylist(entry)} />
@@ -496,10 +505,7 @@ export function LiveView({ active }: { active: boolean }) {
             sources={managedSources}
             activeId={activeId}
             exportEnabled={!!playlist?.channels.length}
-            onSelect={(id) => {
-              setActiveId(id);
-              writeActiveId(id);
-            }}
+            onSelect={openPlaylist}
             onAdd={addPlaylist}
             onEdit={editPlaylist}
             onRename={renamePlaylist}

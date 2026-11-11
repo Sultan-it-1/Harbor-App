@@ -38,6 +38,25 @@ function rangeFromToday(): { start: string; end: string } {
   return { start: todayLocalISO(), end: dateOffsetISO(WINDOW_DAYS_TRACK) };
 }
 
+/**
+ * The month-based sources, asked for every month the watch window touches: this month, and the
+ * next one too when the 14 days cross into it (otherwise a release on the 2nd is missed from
+ * the 20th on).
+ */
+async function overWindowMonths(
+  fetchMonth: (year: number, month: number) => Promise<CalendarItem[]>,
+): Promise<CalendarItem[]> {
+  const now = new Date();
+  const end = new Date();
+  end.setDate(end.getDate() + WINDOW_DAYS_TRACK);
+  const months = [{ year: now.getFullYear(), month: now.getMonth() }];
+  if (end.getMonth() !== now.getMonth() || end.getFullYear() !== now.getFullYear()) {
+    months.push({ year: end.getFullYear(), month: end.getMonth() });
+  }
+  const lists = await Promise.all(months.map((m) => fetchMonth(m.year, m.month)));
+  return lists.flat();
+}
+
 function fireWindowEnd(): string {
   return dateOffsetISO(WINDOW_DAYS_FIRE);
 }
@@ -56,33 +75,32 @@ async function fetchSource(
   settings: Settings,
   authKey: string | null,
 ): Promise<CalendarItem[]> {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
   const { start, end } = rangeFromToday();
   try {
     if (source === "library") {
       if (!authKey) return [];
-      return await fetchLibraryCalendar(authKey, year, month, {
-        tmdbKey: settings.tmdbKey,
-        includeTrakt: traktConnected(),
-      });
+      return await overWindowMonths((year, month) =>
+        fetchLibraryCalendar(authKey, year, month, {
+          tmdbKey: settings.tmdbKey,
+          includeTrakt: traktConnected(),
+        }),
+      );
     }
     if (source === "trakt") {
       if (!traktConnected()) return [];
-      return await fetchTraktCalendar(year, month);
+      return await overWindowMonths(fetchTraktCalendar);
     }
     if (source === "anticipated") {
-      return await fetchAnticipatedCalendar(year, month);
+      return await overWindowMonths(fetchAnticipatedCalendar);
     }
     if (source === "custom") {
       if (!settings.tmdbKey) return [];
       const extras: CalendarItem[][] = [];
       if (settings.customCalendar.includeTraktAnticipated) {
-        extras.push(await fetchAnticipatedCalendar(year, month).catch(() => []));
+        extras.push(await overWindowMonths(fetchAnticipatedCalendar).catch(() => []));
       }
       if (settings.customCalendar.includeTraktWatchlist && traktConnected()) {
-        extras.push(await fetchTraktCalendar(year, month).catch(() => []));
+        extras.push(await overWindowMonths(fetchTraktCalendar).catch(() => []));
       }
       return await fetchCustomCalendar({
         apiKey: settings.tmdbKey,

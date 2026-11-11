@@ -53,6 +53,7 @@ import java.security.SecureRandom
  *   native back button                            -> window.__harborAndroidBack(): boolean
  *   window.HarborAndroid.homeSet(modelJson) / screenShow(page, bottom, width)
  *                                                 -> window.__harborNativeHome(actionJson)  (NativeScreens)
+ *   window.HarborAndroid.setLanguage("en"|"ar")   the app's language, for the native texts (Strings)
  *
  * Bridge security: the Java object is injected as `__harborNative` into every frame (Android
  * can't limit addJavascriptInterface to one frame), and each method wants a per-launch secret
@@ -120,6 +121,7 @@ class MainActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Strings.load(this)
         // Draw edge-to-edge on every Android version (15+ forces it anyway) and pad the
         // content ourselves, so the UI never slides under the status bar / notch / nav bar.
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -358,20 +360,21 @@ class MainActivity : ComponentActivity() {
         val pkg = try { WebView.getCurrentWebViewPackage() } catch (_: Exception) { null } ?: return
         val major = pkg.versionName?.substringBefore('.')?.toIntOrNull() ?: return
         if (major >= MIN_WEBVIEW_MAJOR) return
-        val ar = resources.configuration.locales[0]?.language == "ar"
+        val ar = arabicUi()
         try {
             AlertDialog.Builder(this)
-                .setTitle(if (ar) "حدّث Android System WebView" else "Update Android System WebView")
-                .setMessage(
-                    if (ar) "يحتاج Harbor إصدار $MIN_WEBVIEW_MAJOR أو أحدث من WebView، وجوالك فيه $major. حدّثه من Google Play وإلا قد تظهر الصفحات فاضية."
-                    else "Harbor needs Android System WebView $MIN_WEBVIEW_MAJOR or newer (this phone has $major). Update it from Google Play, otherwise pages may show up empty.",
-                )
+                .setTitle(Strings.webViewTooOldTitle(ar))
+                .setMessage(Strings.webViewTooOld(ar, MIN_WEBVIEW_MAJOR, major))
                 .setPositiveButton("Google Play") { _, _ -> openExternally(Uri.parse("market://details?id=${pkg.packageName}")) }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
         } catch (_: Exception) {
         }
     }
+
+    /** For the two texts that can show before the page ever ran: the app's language once the
+     *  page has said it, the phone's until then. */
+    private fun arabicUi(): Boolean = if (Strings.known) Strings.arabic else resources.configuration.locales[0]?.language == "ar"
 
     private fun onBack() {
         when {
@@ -390,8 +393,7 @@ class MainActivity : ComponentActivity() {
                             moveTaskToBack(true)
                         } else {
                             lastBackAt = now
-                            val ar = resources.configuration.locales[0]?.language == "ar"
-                            Toast.makeText(this, if (ar) "اسحب رجوع مرة ثانية للخروج" else "Swipe back again to leave", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this, Strings.swipeBackAgain(arabicUi()), Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -687,6 +689,18 @@ class MainActivity : ComponentActivity() {
         }
 
         /**
+         * The app's language ("en" or "ar"), a setting of the page: the player, its panels and the
+         * download notifications use it from now on, and it is kept for when the page isn't running.
+         */
+        @JavascriptInterface
+        fun setLanguage(t: String, lang: String) {
+            if (!ok(t)) return
+            guard("setLanguage", Unit) {
+                if (Strings.set(this@MainActivity, lang)) DownloadService.languageChanged(this@MainActivity)
+            }
+        }
+
+        /**
          * Saves bytes made by the page (backup export, an image) to a file the user picks with the
          * system "save as" screen. Answers through window.__harborFileSaved(id, "1"|"0").
          */
@@ -863,7 +877,8 @@ object BuildConfigInfo {
         "0"
     }
 
-    /** The CI build number (the "-88" in a release named android-v0.9.36-88). */
+    /** Android's own version number: the CI build works it out from package.json's version
+     *  (1.2.3 -> 10203); 1 in a local build. */
     @Suppress("DEPRECATION")
     fun versionCode(activity: ComponentActivity): Long = try {
         val info = activity.packageManager.getPackageInfo(activity.packageName, 0)

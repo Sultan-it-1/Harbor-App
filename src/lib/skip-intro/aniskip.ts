@@ -22,8 +22,16 @@ export async function kitsuToMal(kitsuId: number): Promise<number | null> {
   return out;
 }
 
-export function fetchAniSkipSegments(malId: number, episode: number): Promise<SkipSegment[]> {
-  const key = `${malId}:${episode}`;
+// `episodeLengthSec` is the real length of the file being played. AniSkip stores times per
+// release length (a TV cut and a Blu-ray cut of one episode differ), so sending it gets the
+// times that fit this file; 0 asks for whatever it has.
+export function fetchAniSkipSegments(
+  malId: number,
+  episode: number,
+  episodeLengthSec = 0,
+): Promise<SkipSegment[]> {
+  const length = Number.isFinite(episodeLengthSec) && episodeLengthSec > 0 ? Math.round(episodeLengthSec) : 0;
+  const key = `${malId}:${episode}:${length}`;
   const hit = segmentCache.get(key);
   if (hit) return Promise.resolve(hit);
   const pending = inflight.get(key);
@@ -31,7 +39,7 @@ export function fetchAniSkipSegments(malId: number, episode: number): Promise<Sk
   const p = (async () => {
     const params = new URLSearchParams();
     for (const t of ["op", "ed", "mixed-op", "mixed-ed", "recap"]) params.append("types", t);
-    params.set("episodeLength", "0");
+    params.set("episodeLength", String(length));
     const url = `https://api.aniskip.com/v2/skip-times/${malId}/${episode}?${params.toString()}`;
     const res = await fetch(url);
     if (!res.ok) {

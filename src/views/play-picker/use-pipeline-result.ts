@@ -9,6 +9,7 @@ import { runPipeline, type PipelineInput, type PipelineResult } from "@/lib/stre
 import type { Stream } from "@/lib/streams/types";
 import type { PlayEpisode } from "@/lib/view";
 import { parseRuntimeMinutes, stampAddonOrder } from "./picker-utils";
+import { isAndroidApp } from "@/lib/android";
 
 type Settings = ReturnType<typeof useSettings>["settings"];
 
@@ -71,9 +72,13 @@ export function usePipelineResult({
         addonTransportUrls: (addons ?? []).map((a) => a.transportUrl),
         debridSlugs: debrids.map((d) => d.slug),
         scraperKeys: [],
-        filterMode: filterDisabled ? "off" : strictMode ? "strict" : "balanced",
+        // "Turn torrents off completely" changes what a result holds, so a list saved
+        // before the switch was flipped is not reused.
+        filterMode:
+          (filterDisabled ? "off" : strictMode ? "strict" : "balanced") +
+          (settings.torrentsDisabled ? "+no-torrents" : ""),
       }),
-    [addons, debrids, filterDisabled, strictMode],
+    [addons, debrids, filterDisabled, strictMode, settings.torrentsDisabled],
   );
 
   useEffect(() => {
@@ -249,8 +254,10 @@ export function buildPipelineInput({
       runtimeMinutes: parseRuntimeMinutes(meta.runtime),
       inTheaters: meta.inTheaters === true,
       bandwidthMbps: settings.bandwidthMbps > 0 ? settings.bandwidthMbps : undefined,
+      // A limit of the HTML5 player (it plays one audio track). The Android app plays through
+      // ExoPlayer with FFmpeg, where a file with several audio tracks is no worse a pick.
       preferSingleAudioTrack:
-        !("__TAURI_INTERNALS__" in window) || settings.playerEngine === "html5",
+        !isAndroidApp() && (!("__TAURI_INTERNALS__" in window) || settings.playerEngine === "html5"),
       preferAddonId: meta.addonOrigin?.id,
       preferredReleaseGroup: prevGroup,
       respectAddonOrder: settings.streamSort === "addon",

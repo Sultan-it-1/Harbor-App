@@ -17,20 +17,34 @@ const SHORT_RUNTIME_FLOOR_SEC = 90;
 type Entry = { ts: number; reason: string; ttl?: number };
 type Map = Record<string, Entry>;
 
+// The parsed list is kept in memory: a source list checks every one of its streams against it,
+// and parsing the stored JSON again for each was the slow part. Every write goes through save().
+let memo: Map | null = null;
+
 function load(): Map {
+  if (memo) return memo;
+  let m: Map = {};
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    return JSON.parse(raw) as Map;
+    const parsed = raw ? (JSON.parse(raw) as Map | null) : null;
+    if (parsed && typeof parsed === "object") m = parsed;
   } catch {
-    return {};
+    /* unreadable: start empty */
   }
+  memo = m;
+  return m;
 }
 
 function save(m: Map): void {
+  memo = m;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(m));
   } catch {}
+}
+
+/** The stored list was changed from outside this module (quota recovery): read it again. */
+export function forgetDeadStreamsMemo(): void {
+  memo = null;
 }
 
 export function streamFingerprint(s: StreamLike): string | null {
@@ -112,6 +126,7 @@ export function filterDead<T extends StreamLike>(
 }
 
 export function clearDeadStreams(): void {
+  memo = null;
   try {
     localStorage.removeItem(STORAGE_KEY);
   } catch {}

@@ -13,11 +13,12 @@ export function BackupRow() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Backup | null>(null);
   const [applying, setApplying] = useState(false);
+  const [withKeys, setWithKeys] = useState(false);
 
   const doExport = async () => {
     setError(null);
     try {
-      const saved = await downloadBackup();
+      const saved = await downloadBackup(withKeys);
       if (saved) {
         setExported(true);
         window.setTimeout(() => setExported(false), 1600);
@@ -48,9 +49,16 @@ export function BackupRow() {
   const confirmRestore = () => {
     if (!pending) return;
     setApplying(true);
-    void applyBackup(pending).then(() => {
-      window.setTimeout(() => window.location.reload(), 280);
-    });
+    applyBackup(pending)
+      .then(() => {
+        window.setTimeout(() => window.location.reload(), 280);
+      })
+      .catch(() => {
+        // The window used to stay on "Restoring..." for good.
+        setApplying(false);
+        setPending(null);
+        setError("Could not restore that backup.");
+      });
   };
 
   return (
@@ -69,6 +77,22 @@ export function BackupRow() {
           <span className="text-[12.5px] leading-relaxed text-ink-subtle">
             {t("Saves your whole Harbor setup to one file: theme, home layout, settings, addons, profiles, watchlist, player layouts, watch progress, and more. Your Stremio sign-in is left out on purpose.")}
           </span>
+          <label className="mt-2 flex cursor-pointer items-start gap-2.5">
+            <input
+              type="checkbox"
+              checked={withKeys}
+              onChange={(e) => setWithKeys(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--color-accent)]"
+            />
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-[13px] font-medium text-ink">{t("Include API keys and Trakt / Simkl sign-ins")}</span>
+              <span className="text-[12px] leading-relaxed text-ink-subtle">
+                {withKeys
+                  ? t("The file will hold your keys as plain text. Keep it private, like a password.")
+                  : t("Left out: API and debrid keys, webhook links, Trakt and Simkl sign-ins. A restore keeps the ones on the device. Addon links and playlists are always saved.")}
+              </span>
+            </span>
+          </label>
         </div>
         <button
           type="button"
@@ -101,7 +125,7 @@ export function BackupRow() {
         </button>
       </div>
 
-      {error && <p className="px-1 text-[12px] text-danger">{error}</p>}
+      {error && <p className="px-1 text-[12px] text-danger">{t(error)}</p>}
 
       {pending && (
         <RestoreConfirm

@@ -2,6 +2,7 @@ package app.harbor.android
 
 import android.app.PictureInPictureParams
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -14,6 +15,7 @@ import android.os.Build
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Rational
 import android.view.Gravity
@@ -36,8 +38,10 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.text.CueGroup
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
@@ -65,9 +69,14 @@ import java.util.concurrent.Executors
  * State is streamed to the web UI so resume points, Stremio sync and auto-next keep working.
  *
  * On top of Media3's controls it adds: gestures (double-tap seek, brightness/volume/seek
- * swipes, pinch), a top bar (title, streams, subtitles, audio, aspect, lock), a next-episode
- * button, and side panels for streams, subtitles (embedded + addon, grouped by language,
- * own renderer with instant delay) and audio/speed.
+ * swipes, pinch, hold for double speed), a top bar (title, streams, subtitles, audio, aspect,
+ * lock), a next-episode button, a skip button for intros, recaps and credits, and side panels for
+ * streams (with "open in another player"), subtitles (embedded + addon, grouped by language, own
+ * renderer with instant delay, and a sync panel that lines an addon subtitle up with the sound by
+ * ear) and audio/speed (with the sleep timer).
+ *
+ * Two subtitles can show at once: the first is the one above, the second always an addon or saved
+ * one with a view, look, delay and sync of its own (DualSubs decides where each goes).
  *
  * Subtitles saved with a download are listed on their own and are all that shows offline;
  * online, every addon subtitle shows too, each with a button that saves it with the download.
@@ -88,8 +97,13 @@ class NativePlayer(
         override fun run() {
             sendState()
             val p = player ?: return
+            updateSkip()
+            if (sleep.endOfVideo && p.isPlaying && SleepTimer.nearEnd(p.currentPosition, knownDuration(p), p.playbackParameters.speed)) fireSleep()
+            // A skip or the sleep timer above can restart this ticker from the player's listeners:
+            // keep it to one run a second.
+            handler.removeCallbacks(this)
             // Only while something moves: a paused video reports its state from the listeners.
-            if (p.isPlaying || p.playbackState == Player.STATE_BUFFERING || reconnecting) handler.postDelayed(this, 1000)
+            if (p.isPlaying || p.playbackState == Player.STATE_BUFFERING || reconnecting) handler.postDelayed(this, SleepTimer.CHECK_EVERY_MS)
         }
     }
 
@@ -145,6 +159,83 @@ class NativePlayer(
     private var downloadId: String? = null
     private val saved = ArrayList<CatalogSub>()
     private val saving = HashSet<String>()
+    /** The subtitle the viewer picked for this episode the last time it played (the page
+     *  remembers it and sends it with play): its address until it turns up in the lists, then
+     *  its id while it loads. */
+    private var restoreUrl: String? = null
+    private var restoringId: String? = null
+    /** The sync the viewer gave an addon subtitle by ear (TextSync), kept on the device by the
+     *  subtitle's address and put back whenever that subtitle is shown again. */
+    private val syncStore = SyncStore(activity)
+    private var syncPanel: SyncPanel? = null
+    /** The address of the subtitle the open sync panel lists. */
+    private var syncPanelFor: String? = null
+    /** Whether that is the second subtitle (it has its own renderer and its own sync). */
+    private var syncSecond = false
+
+    // ---- a second subtitle, shown together with the first ---------------------------------
+    /** The addon (or saved) subtitle shown as the second one; null for none. Its cues are in
+     *  [parsed] like the first one's, and it is drawn by [ext2] in [extView2]. */
+    private var secondId: String? = null
+    private var extView2: SubtitleView? = null
+    private var ext2: ExternalSubs? = null
+    /** The second one's look, saved apart from the first one's. */
+    private var subStyle2 = SubStyle.secondDefault()
+    /** The second subtitle being loaded, and the one that is wanted once it has: a pick made
+     *  while another is still on its way replaces it. */
+    private val loading2 = HashSet<String>()
+    private var wantedSecond: String? = null
+    /** Subtitle files on their way, with who waits for each: one asked for as the first and as
+     *  the second at the same moment is still fetched once. */
+    private val fetching = HashMap<String, ArrayList<(List<CuesWithTiming>?) -> Unit>>()
+    /** The viewer chose (or cleared) the second subtitle in this player's panel: what the page
+     *  remembered from last time no longer counts. */
+    private var userPickedSecond = false
+    /** The second subtitle picked for this episode the last time it played (play's
+     *  "restoreSub2"), until it has been put back. */
+    private var restore2Url: String? = null
+    /** How two subtitles are laid out (saved on the device): stacked (the layout a viewer who
+     *  has never chosen gets), or side by side with the sides swapped or not. */
+    private var dualStacked = true
+    private var dualSwapped = false
+    /** Which of the two the "Look and timing" tab is editing. */
+    private var editSecond = false
+    /** Where each subtitle goes, as last worked out (layoutSubtitles). */
+    private var subPlan: DualSubs.Plan? = null
+    /** The second view's distance from the bottom as last set, so it is only set on a change. */
+    private var secondBottom = Float.NaN
+    /** The embedded track that turned out to draw pictures rather than text. */
+    private var pictureTrack: Format? = null
+    private val subMeasure by lazy { SubtitleMeasure(activity) }
+    private val relayoutSubs = Runnable { layoutSubtitles() }
+
+    // ---- skip intro / recap / credits ------------------------------------------------------
+    private var segments: List<SkipSegment> = emptyList()
+    /** The title the list was sent for. It can arrive before that title's play(), and it must not
+     *  act on the title that is still playing until then. */
+    private var segmentsKey = ""
+    private var autoSkipIntro = false
+    /** Intros already skipped automatically: seeking back into one offers the button instead. */
+    private val autoSkipped = HashSet<SkipSegment>()
+    /** The segment the skip button is offering right now. */
+    private var offeredSkip: SkipSegment? = null
+    /** The segment whose button was tapped: it stays hidden until the position has left it. */
+    private var dismissedSkip: SkipSegment? = null
+    /** Credits that run to the end of an episode with a next one are playing: the next-episode
+     *  button shows by itself instead of "Skip credits". */
+    private var creditsToEnd = false
+
+    // ---- sleep timer / hold for double speed -----------------------------------------------
+    /** Lives as long as the player is open: a rebuilt chrome or another stream of the same title
+     *  doesn't lose it. */
+    private val sleep = SleepTimer()
+    private val sleepFire = Runnable { fireSleep() }
+    /** The sleep timer paused during a network drop: reconnecting must not start playback again. */
+    private var sleepHeld = false
+    private var sleepTitle: TextView? = null
+    /** The speed to go back to when the finger lifts; null while no hold is on. */
+    private var holdPrevSpeed: Float? = null
+    private var holdPlayer: ExoPlayer? = null
 
     // ---- chrome ----------------------------------------------------------------------------
     private var topBar: LinearLayout? = null
@@ -152,6 +243,8 @@ class NativePlayer(
     private var subtitleView: TextView? = null
     private var qualityView: TextView? = null
     private var nextButton: View? = null
+    private var skipButton: View? = null
+    private var skipLabel: TextView? = null
     private var unlockButton: View? = null
     private var indicator: LinearLayout? = null
     private var indicatorIcon: ImageView? = null
@@ -163,6 +256,14 @@ class NativePlayer(
     private var pickingStream: String? = null
     private var streamQuality = "all"
     private var brightnessTouched = false
+    private var inPip = false
+    /** The camera cutout and gesture bar, as last measured (applyChromeInsets). */
+    private var insetSide = 0
+    private var insetBottom = 0
+    /** The language and direction the chrome was built for. Its texts and sides are set when it
+     *  is built, so after a change (Settings > Language) it is built again the next time the
+     *  player shows. */
+    private var chromeFor = ""
 
     val isShowing: Boolean get() = view?.visibility == View.VISIBLE
 
@@ -185,8 +286,23 @@ class NativePlayer(
             saved.clear(); saving.clear()
             subStore.clear()
             activeExtId = null; subsOff = false; userPickedSub = false; autoSubDone = false
+            restoreUrl = null; restoringId = null
+            // The sync panel lists the lines of the subtitle that is about to go.
+            if (panelKind == "sync") panel?.dismiss()
             ext?.delayMs = 0
             ext?.clear()
+            // The second subtitle goes with the title too, and whatever was still loading for it.
+            secondId = null; wantedSecond = null; loading2.clear(); fetching.clear()
+            userPickedSecond = false; restore2Url = null; editSecond = false; pictureTrack = null
+            ext2?.delayMs = 0
+            ext2?.clear()
+            // Skip segments belong to a title too, unless the page already sent this one's.
+            if (segmentsKey != key) {
+                segments = emptyList()
+                segmentsKey = key
+                autoSkipped.clear()
+            }
+            offeredSkip = null; dismissedSkip = null; creditsToEnd = false
             // title / episode line / next-episode come from the "meta" command, which can
             // arrive before this play() — don't wipe them here.
         }
@@ -196,14 +312,40 @@ class NativePlayer(
         src.optString("title").takeIf { it.isNotBlank() }?.let { title = it }
         prefSubLangs = jsonStrings(src.optJSONArray("prefSubLangs")).ifEmpty { prefSubLangs }
         prefAudioLangs = jsonStrings(src.optJSONArray("prefAudioLangs")).ifEmpty { prefAudioLangs }
+        // Settings > Language > "subtitles off by default", or the viewer turned them off for this
+        // title: start without subtitles and pick none automatically. A choice already made in
+        // this player's own panel stays (a stream switch plays the same title again).
+        if (src.optBoolean("subsOff", false) && !userPickedSub) subsOff = true
+        // The exact subtitle picked for this episode last time. A choice made in this player's
+        // panel since then stays.
+        if (!userPickedSub && !subsOff) {
+            src.optJSONObject("restoreSub")?.optString("url")?.takeIf { it.isNotBlank() }?.let { restoreUrl = it }
+        }
         subStyle = SubStyle.load(activity) ?: SubStyle.fromHarbor(src.optJSONObject("subStyle"))
+        // The second subtitle picked for this episode last time. Not over one that is showing,
+        // nor after the viewer has chosen (or cleared) the second in this player's panel.
+        if (!userPickedSecond && !subsOff && secondId == null) {
+            src.optJSONObject("restoreSub2")?.optString("url")?.takeIf { it.isNotBlank() }?.let { restore2Url = it }
+        }
+        subStyle2 = SubStyle.load(activity, SubStyle.PREFS_SECOND) ?: SubStyle.secondDefault()
+        activity.getSharedPreferences("harbor.player", Context.MODE_PRIVATE).let { prefs ->
+            // Stacked unless side by side was chosen.
+            dualStacked = prefs.getString("dualLayout", null) != DualSubs.SIDE_BY_SIDE
+            dualSwapped = prefs.getBoolean("dualSwap", false)
+        }
         if (pickingStream != null) {
             pickingStream = null
             panel?.dismiss()
-            toast("تم تبديل المصدر")
+            toast(Strings.sourceSwitched)
         }
         start(src, src.optLong("startMs", 0))
+        // The same title opened again after the player was closed: closing emptied the subtitle
+        // view, so the subtitle that is still marked as chosen goes back on.
+        activeExtId?.let { id -> if (ext?.active == false) parsed[id]?.let { ext?.set(it, activeSub()?.let { s -> syncStore.get(s.src) }) } }
+        secondId?.let { id -> if (ext2?.active == false) parsed[id]?.let { ext2?.set(it, secondSub()?.let { s -> syncStore.get(s.src) }) } }
         addToCatalog(src.optJSONArray("subtitles"))
+        tryRestoreSub()
+        tryRestoreSecond()
     }
 
     private fun buildItem(src: JSONObject): MediaItem {
@@ -223,12 +365,19 @@ class NativePlayer(
         val headers = HashMap<String, String>()
         src.optJSONObject("headers")?.let { h -> h.keys().forEach { k -> headers[k] = h.getString(k) } }
         val ua = headers.remove("User-Agent") ?: headers.remove("user-agent") ?: userAgent
-        val http = DefaultHttpDataSource.Factory()
-            .setUserAgent(ua)
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(20_000)
-            .setReadTimeoutMs(30_000)
-            .setDefaultRequestProperties(headers)
+        // A stream that comes with a login (Authorization / Cookie) goes through our own source:
+        // Media3's repeats every header at each redirect, which would hand the login to whatever
+        // host a redirect leads to. Streams without one stay on Media3's.
+        val http: DataSource.Factory = if (headers.keys.any { RedirectGuard.isCredential(it) }) {
+            GuardedHttpDataSource.Factory(ua, headers, HTTP_CONNECT_TIMEOUT_MS, HTTP_READ_TIMEOUT_MS)
+        } else {
+            DefaultHttpDataSource.Factory()
+                .setUserAgent(ua)
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(HTTP_CONNECT_TIMEOUT_MS)
+                .setReadTimeoutMs(HTTP_READ_TIMEOUT_MS)
+                .setDefaultRequestProperties(headers)
+        }
         val dataSource = DefaultDataSource.Factory(ctx, http)
         val renderers = DefaultRenderersFactory(ctx)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
@@ -249,7 +398,7 @@ class NativePlayer(
 
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_ENDED) emit(JSONObject().put("type", "ended").toString())
+                if (state == Player.STATE_ENDED && !sleepAtEnd(p)) emit(JSONObject().put("type", "ended").toString())
                 if (state == Player.STATE_READY) onRecovered()
                 updateKeepScreenOn()
                 restartTicker()
@@ -259,14 +408,22 @@ class NativePlayer(
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 updateKeepScreenOn()
                 ext?.setRunning(isPlaying)
+                ext2?.setRunning(isPlaying)
                 restartTicker()
                 sendState()
             }
 
-            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) = updateKeepScreenOn()
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                // Play was pressed: whatever the sleep timer held back is the viewer's to start.
+                if (playWhenReady) sleepHeld = false
+                updateKeepScreenOn()
+            }
 
             override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
                 ext?.refresh()
+                ext2?.refresh()
+                // A seek can land in a segment, or leave one, while the video is paused.
+                updateSkip()
             }
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 matchRefreshToVideo()
@@ -278,7 +435,27 @@ class NativePlayer(
                 matchRefreshToVideo()
                 updateChrome()
                 maybeAutoSelectSub()
+                // The first subtitle may be another embedded track now, or none: the second is
+                // laid out by it, and last time's second waits for a first to come back to.
+                if (secondId != null) layoutSubtitles()
+                tryRestoreSecond()
                 if (panel?.isOpen == true && (panelKind == "subs" || panelKind == "audio")) refreshPanel()
+            }
+
+            override fun onCues(cueGroup: CueGroup) {
+                // The lines of an embedded track (PlayerView draws them). Only a second subtitle
+                // needs to know: stacked, it sits right above them.
+                if (secondId == null || activeExtId != null) return
+                if (cueGroup.cues.any { it.bitmap != null }) {
+                    val track = embeddedFirst()
+                    if (track != null && track != pictureTrack) {
+                        // Pictures, though the track didn't say so: side by side would squash them.
+                        pictureTrack = track
+                        layoutSubtitles()
+                        return
+                    }
+                }
+                if (subPlan?.secondBottom == DualSubs.Bottom.ABOVE_FIRST) placeSecond()
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -335,7 +512,7 @@ class NativePlayer(
         }
         if (now - reconnectSince > RECONNECT_BUDGET_MS) return false
         reconnectAttempts++
-        flash(R.drawable.ic_refresh_cw, if (isOnline()) "جارٍ إعادة الاتصال…" else "بانتظار الإنترنت…", holdMs = RECONNECT_BUDGET_MS)
+        flash(R.drawable.ic_refresh_cw, if (isOnline()) Strings.reconnecting else Strings.waitingForInternetEllipsis, holdMs = RECONNECT_BUDGET_MS)
         watchNetwork()
         updateKeepScreenOn()
         handler.removeCallbacks(reconnect)
@@ -353,7 +530,7 @@ class NativePlayer(
         }
         // After an error the player keeps its position: prepare() retries from there.
         p.prepare()
-        p.playWhenReady = true
+        if (!sleepHeld) p.playWhenReady = true
     }
 
     private fun onRecovered() {
@@ -362,7 +539,7 @@ class NativePlayer(
         reconnectAttempts = 0
         handler.removeCallbacks(reconnect)
         unwatchNetwork()
-        flash(R.drawable.ic_play, "رجع الاتصال", holdMs = 900)
+        flash(R.drawable.ic_play, Strings.backOnline, holdMs = 900)
     }
 
     /** Native gave up: tell the page (fatal) and show the user how to carry on, right here —
@@ -383,7 +560,7 @@ class NativePlayer(
         )
         flash(
             R.drawable.ic_refresh_cw,
-            if (network) "انقطع البث. اضغط ▶ للمحاولة مرة ثانية" else "تعذّر تشغيل هذا المصدر. اضغط ▶ للمحاولة أو اختر مصدراً آخر",
+            if (network) Strings.streamDropped else Strings.sourceFailedRetry,
             holdMs = 8000,
         )
         view?.showController()
@@ -456,18 +633,23 @@ class NativePlayer(
     }
 
     fun onPictureInPictureChanged(inPip: Boolean) {
+        this.inPip = inPip
         val v = view ?: return
         v.useController = !inPip
         if (inPip) {
+            // The finger that held the video down for double speed is gone with the full screen.
+            endHoldSpeed()
             v.hideController()
             panel?.dismiss()
-            listOfNotNull(topBar, nextButton, unlockButton, indicator).forEach { it.visibility = View.GONE }
+            listOfNotNull(topBar, nextButton, skipButton, unlockButton, indicator).forEach { it.visibility = View.GONE }
             shade?.animate()?.cancel()
             shade?.visibility = View.GONE
             shadeTarget = false
         } else {
             updateChrome()
         }
+        // The small window shows the first subtitle only; the second comes back with full screen.
+        layoutSubtitles()
     }
 
     /** Fullscreen draws edge to edge: keep the controls clear of the camera cutout and of the
@@ -478,6 +660,8 @@ class NativePlayer(
         val gest = ins.getInsets(WindowInsetsCompat.Type.mandatorySystemGestures())
         val ctx = activity
         val side = maxOf(cut.left, cut.right)
+        insetSide = side
+        insetBottom = gest.bottom
         topBar?.setPadding(ctx.dp(20) + cut.left, ctx.dp(14) + cut.top, ctx.dp(20) + cut.right, ctx.dp(28))
         view?.findViewById<View>(androidx.media3.ui.R.id.exo_controller)?.setPadding(cut.left, 0, cut.right, gest.bottom)
         (nextButton?.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
@@ -485,10 +669,13 @@ class NativePlayer(
             lp.bottomMargin = ctx.dp(96) + gest.bottom
             nextButton?.layoutParams = lp
         }
+        placeSkipButton(aboveNext = nextButton?.visibility == View.VISIBLE)
         (unlockButton?.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
             lp.marginStart = ctx.dp(32) + side
             unlockButton?.layoutParams = lp
         }
+        // Side by side, the two subtitles keep clear of the cutout as well.
+        if (secondId != null) layoutSubtitles()
     }
 
     private fun jsonStrings(a: JSONArray?): List<String> {
@@ -508,12 +695,12 @@ class NativePlayer(
 
     private fun show(p: ExoPlayer) {
         val v = view ?: createView()
+        if (chromeFor != chromeKey()) buildChrome()
         v.player = p
         v.visibility = View.VISIBLE
         v.bringToFront()
-        subStyle.applyTo(v.subtitleView)
-        subStyle.applyTo(extView)
-        listOfNotNull(topBar, nextButton, indicator, unlockButton).forEach { it.bringToFront() }
+        applySubStyle()
+        listOfNotNull(topBar, nextButton, skipButton, indicator, unlockButton).forEach { it.bringToFront() }
         updateChrome()
         activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         activity.setFullscreenMode(true)
@@ -555,6 +742,27 @@ class NativePlayer(
         extView = sv
         ext = ExternalSubs(sv) { player?.currentPosition }
 
+        // A second subtitle, shown together with the first, has a view and a renderer of its own.
+        val sv2 = SubtitleView(activity)
+        (pv.overlayFrameLayout ?: pv).addView(sv2, FrameLayout.LayoutParams(MainActivity.MATCH, MainActivity.MATCH))
+        extView2 = sv2
+        ext2 = ExternalSubs(sv2, ownBottom = true) { player?.currentPosition }
+        // Stacked, the second sits right above the first one's lines: it is placed again whenever
+        // either of them shows another line.
+        val restack = { if (subPlan?.secondBottom == DualSubs.Bottom.ABOVE_FIRST) placeSecond() }
+        ext?.onShown = restack
+        ext2?.onShown = restack
+        // A new size (the phone turned, a picture of another shape) moves the halves and the
+        // lines. After this layout pass, since it changes the views' padding.
+        val resized = View.OnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (secondId != null && (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop)) {
+                handler.removeCallbacks(relayoutSubs)
+                handler.post(relayoutSubs)
+            }
+        }
+        sv2.addOnLayoutChangeListener(resized)
+        pv.subtitleView?.addOnLayoutChangeListener(resized)
+
         // One even shade over the whole picture while the controls show, edge to edge, a little
         // darker at the top and bottom where the text sits. Above the video and subtitles, below
         // the controls. It follows the controller's visibility (updateChrome), so it also stays
@@ -581,23 +789,40 @@ class NativePlayer(
             controllerVisible = vis == View.VISIBLE
             updateChrome()
         })
-        buildTopBar()
-        buildNextButton()
-        buildIndicator()
-        buildUnlockButton()
+        buildChrome()
         return pv
     }
+
+    private fun chromeKey() = "${Strings.lang}|${activity.uiDirection()}"
+
+    /** Top bar, next-episode and skip buttons, the indicator and the unlock button, in the app's
+     *  language and direction (root keeps the phone's direction, so each piece gets its own, and a
+     *  side of the screen is worked out here rather than left to root). */
+    private fun buildChrome() {
+        listOfNotNull(topBar, nextButton, skipButton, indicator, unlockButton).forEach { root.removeView(it) }
+        buildTopBar()
+        buildNextButton()
+        buildSkipButton()
+        buildIndicator()
+        buildUnlockButton()
+        chromeFor = chromeKey()
+    }
+
+    private fun side(relative: Int) = Gravity.getAbsoluteGravity(relative, activity.uiDirection())
 
     private fun buildTopBar() {
         val ctx = activity
         val bar = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
+            layoutDirection = ctx.uiDirection()
             gravity = Gravity.CENTER_VERTICAL
             setPadding(ctx.dp(20), ctx.dp(14), ctx.dp(20), ctx.dp(28))
             // No shade of its own: it only shows with the controls, whose shade covers the screen.
         }
-        bar.addView(ctx.iconButton(R.drawable.ic_arrow_left, "رجوع") { close() }.apply {
+        bar.addView(ctx.iconButton(R.drawable.ic_arrow_left, Strings.back) { close() }.apply {
             (layoutParams as LinearLayout.LayoutParams).marginStart = 0
+            // Right-to-left: the arrow points the other way, like the text.
+            if (ctx.uiDirection() == View.LAYOUT_DIRECTION_RTL) scaleX = -1f
         })
         val texts = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -610,11 +835,11 @@ class NativePlayer(
             texts.addView(it)
         }
         bar.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(ctx.iconButton(R.drawable.ic_layers, "المصادر") { openStreams() })
-        bar.addView(ctx.iconButton(R.drawable.ic_captions, "الترجمة") { openSubs("tracks") })
-        bar.addView(ctx.iconButton(R.drawable.ic_audio_lines, "الصوت والسرعة") { openAudio() })
-        bar.addView(ctx.iconButton(R.drawable.ic_scan, "حجم الصورة") { cycleResize() })
-        bar.addView(ctx.iconButton(R.drawable.ic_lock, "قفل الشاشة") { setLocked(true) })
+        bar.addView(ctx.iconButton(R.drawable.ic_layers, Strings.sources) { openStreams() })
+        bar.addView(ctx.iconButton(R.drawable.ic_captions, Strings.subtitles) { openSubs("tracks") })
+        bar.addView(ctx.iconButton(R.drawable.ic_audio_lines, Strings.audioAndSpeed) { openAudio() })
+        bar.addView(ctx.iconButton(R.drawable.ic_scan, Strings.pictureSize) { cycleResize() })
+        bar.addView(ctx.iconButton(R.drawable.ic_lock, Strings.lockScreen) { setLocked(true) })
         root.addView(bar, FrameLayout.LayoutParams(MainActivity.MATCH, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
         topBar = bar
     }
@@ -623,6 +848,7 @@ class NativePlayer(
         val ctx = activity
         val b = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
+            layoutDirection = ctx.uiDirection()
             gravity = Gravity.CENTER
             setPadding(ctx.dp(16), 0, ctx.dp(18), 0)
             background = rounded(Color.WHITE, 999f)
@@ -631,18 +857,47 @@ class NativePlayer(
             addView(ctx.icon(R.drawable.ic_skip_forward, 18, Color.BLACK).apply {
                 layoutParams = LinearLayout.LayoutParams(ctx.dp(18), ctx.dp(18)).apply { marginEnd = ctx.dp(8) }
             })
-            addView(ctx.label("الحلقة التالية", 14f, Color.BLACK, bold = true))
+            addView(ctx.label(Strings.nextEpisode, 14f, Color.BLACK, bold = true))
         }
-        root.addView(b, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ctx.dp(42), Gravity.BOTTOM or Gravity.END).apply {
-            setMargins(0, 0, ctx.dp(28), ctx.dp(96))
+        root.addView(b, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ctx.dp(NEXT_BUTTON_DP), Gravity.BOTTOM or side(Gravity.END)).apply {
+            marginEnd = ctx.dp(28)
+            bottomMargin = ctx.dp(96)
         })
         nextButton = b
+    }
+
+    /** "Skip intro" / "Skip recap" / "Skip credits": the next-episode button's look, in its
+     *  corner. Its text is set when it shows (showSkipAndNext). */
+    private fun buildSkipButton() {
+        val ctx = activity
+        val text = ctx.label("", 14f, Color.BLACK, bold = true)
+        val b = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = ctx.uiDirection()
+            gravity = Gravity.CENTER
+            setPadding(ctx.dp(16), 0, ctx.dp(18), 0)
+            background = rounded(Color.WHITE, 999f)
+            isClickable = true
+            visibility = View.GONE
+            setOnClickListener { skipOffered() }
+            addView(ctx.icon(R.drawable.ic_fast_forward, 18, Color.BLACK).apply {
+                layoutParams = LinearLayout.LayoutParams(ctx.dp(18), ctx.dp(18)).apply { marginEnd = ctx.dp(8) }
+            })
+            addView(text)
+        }
+        root.addView(b, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ctx.dp(SKIP_BUTTON_DP), Gravity.BOTTOM or side(Gravity.END)).apply {
+            marginEnd = ctx.dp(28) + insetSide
+            bottomMargin = ctx.dp(96) + insetBottom
+        })
+        skipButton = b
+        skipLabel = text
     }
 
     private fun buildIndicator() {
         val ctx = activity
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
+            layoutDirection = ctx.uiDirection()
             gravity = Gravity.CENTER
             setPadding(ctx.dp(18), ctx.dp(12), ctx.dp(20), ctx.dp(12))
             background = rounded(Color.argb(175, 0, 0, 0), 999f)
@@ -659,11 +914,12 @@ class NativePlayer(
 
     private fun buildUnlockButton() {
         val ctx = activity
-        val b = ctx.iconButton(R.drawable.ic_lock_open, "فتح القفل") { setLocked(false) }.apply {
+        val b = ctx.iconButton(R.drawable.ic_lock_open, Strings.unlock) { setLocked(false) }.apply {
             background = rounded(Color.argb(150, 0, 0, 0), 999f)
+            layoutDirection = ctx.uiDirection()
             visibility = View.GONE
         }
-        root.addView(b, FrameLayout.LayoutParams(ctx.dp(56), ctx.dp(56), Gravity.CENTER_VERTICAL or Gravity.START).apply {
+        root.addView(b, FrameLayout.LayoutParams(ctx.dp(56), ctx.dp(56), Gravity.CENTER_VERTICAL or side(Gravity.START)).apply {
             marginStart = ctx.dp(32)
         })
         unlockButton = b
@@ -679,8 +935,9 @@ class NativePlayer(
         (box.layoutParams as FrameLayout.LayoutParams).let { lp ->
             if (lp.gravity != gravity) {
                 lp.gravity = gravity
-                lp.marginStart = if (gravity and Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK == Gravity.START) activity.dp(72) else 0
-                lp.marginEnd = if (gravity and Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK == Gravity.END) activity.dp(72) else 0
+                lp.leftMargin = if (gravity and Gravity.HORIZONTAL_GRAVITY_MASK == Gravity.LEFT) activity.dp(72) else 0
+                lp.rightMargin = if (gravity and Gravity.HORIZONTAL_GRAVITY_MASK == Gravity.RIGHT) activity.dp(72) else 0
+                lp.topMargin = if (gravity and Gravity.VERTICAL_GRAVITY_MASK == Gravity.TOP) activity.dp(28) else 0
                 box.layoutParams = lp
             }
         }
@@ -694,13 +951,89 @@ class NativePlayer(
         val showing = isShowing && !locked && controllerVisible && panel?.isOpen != true
         topBar?.visibility = if (showing) View.VISIBLE else View.GONE
         setShade(isShowing && !locked && controllerVisible)
-        nextButton?.visibility = if (showing && hasNext) View.VISIBLE else View.GONE
+        updateSkip() // the next-episode and skip buttons
         titleView?.text = title
         subtitleView?.text = subtitleLine
         subtitleView?.visibility = if (subtitleLine.isBlank()) View.GONE else View.VISIBLE
         val q = if (showQuality) qualityText() else ""
         qualityView?.text = q
         qualityView?.visibility = if (q.isBlank()) View.GONE else View.VISIBLE
+    }
+
+    // =========================================================================================
+    // Skip intro / recap / credits. The page works the segments out and sends them ("segments");
+    // its own button is hidden under this view, so the button is drawn here.
+    // =========================================================================================
+
+    /** Works out what the skip button does at the current position: offer the segment, skip an
+     *  intro by itself (Settings), or leave end credits to the next-episode button. */
+    private fun updateSkip() {
+        val p = player
+        // A list sent ahead for the next title waits for that title's play().
+        val list = if (segmentsKey.isEmpty() || segmentsKey == contentKey) segments else emptyList()
+        val d = if (p == null || !isShowing || list.isEmpty()) SkipSegments.Decision(SkipSegments.Action.NONE)
+        else SkipSegments.decide(list, p.currentPosition, knownDuration(p), hasNext, autoSkipIntro, autoSkipped)
+        val seg = d.segment
+        if (d.action == SkipSegments.Action.AUTO_SKIP && p != null && seg != null) {
+            // Remembered first: the look at the new position below must not skip it again.
+            autoSkipped.add(seg)
+            p.seekTo(SkipSegments.target(seg, knownDuration(p)))
+            if (!inPip) flash(R.drawable.ic_fast_forward, Strings.introSkipped, holdMs = 1500)
+            updateSkip()
+            return
+        }
+        if (seg != dismissedSkip) dismissedSkip = null
+        creditsToEnd = d.action == SkipSegments.Action.NEXT_EPISODE
+        offeredSkip = seg.takeIf { d.action == SkipSegments.Action.OFFER && it != dismissedSkip }
+        showSkipAndNext()
+    }
+
+    /**
+     * The next-episode button shows with the controls, and by itself over end credits. The skip
+     * button shows whenever a segment is on offer, controls or not, above the next-episode button
+     * when both are up. Neither shows on a locked screen, in picture-in-picture or under a panel.
+     */
+    private fun showSkipAndNext() {
+        val free = isShowing && !locked && !inPip && panel?.isOpen != true
+        val next = free && hasNext && (controllerVisible || creditsToEnd)
+        nextButton?.visibility = if (next) View.VISIBLE else View.GONE
+        val b = skipButton ?: return
+        val seg = offeredSkip.takeIf { free }
+        if (seg == null) {
+            b.visibility = View.GONE
+            return
+        }
+        val text = when (seg.kind) {
+            SkipSegments.RECAP -> Strings.skipRecap
+            SkipSegments.OUTRO -> Strings.skipCredits
+            else -> Strings.skipIntro
+        }
+        // This runs every second while a segment plays: no new layout for the same text.
+        if (skipLabel?.text?.toString() != text) skipLabel?.text = text
+        placeSkipButton(aboveNext = next)
+        b.visibility = View.VISIBLE
+    }
+
+    private fun placeSkipButton(aboveNext: Boolean) {
+        val b = skipButton ?: return
+        val lp = b.layoutParams as? FrameLayout.LayoutParams ?: return
+        val ctx = activity
+        val bottom = ctx.dp(if (aboveNext) 96 + NEXT_BUTTON_DP + 10 else 96) + insetBottom
+        val end = ctx.dp(28) + insetSide
+        if (lp.bottomMargin == bottom && lp.marginEnd == end) return
+        lp.bottomMargin = bottom
+        lp.marginEnd = end
+        b.layoutParams = lp
+    }
+
+    /** The skip button was tapped. */
+    private fun skipOffered() {
+        val p = player ?: return
+        val seg = offeredSkip ?: return
+        // Hidden from the tap on, even when the seek takes a moment (or the stream can't seek).
+        dismissedSkip = seg
+        p.seekTo(SkipSegments.target(seg, knownDuration(p)))
+        updateSkip()
     }
 
     private fun setShade(on: Boolean) {
@@ -785,7 +1118,7 @@ class NativePlayer(
             unlockButton?.visibility = View.VISIBLE
             handler.removeCallbacks(hideUnlock)
             handler.postDelayed(hideUnlock, 2500)
-            toast("الشاشة مقفلة")
+            toast(Strings.screenLocked)
         } else {
             unlockButton?.visibility = View.GONE
             pv.showController()
@@ -801,9 +1134,9 @@ class NativePlayer(
         }
         view?.resizeMode = resizeMode
         flash(R.drawable.ic_scan, when (resizeMode) {
-            AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "ملء الشاشة"
-            AspectRatioFrameLayout.RESIZE_MODE_FILL -> "تمديد"
-            else -> "الحجم الأصلي"
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> Strings.fillScreen
+            AspectRatioFrameLayout.RESIZE_MODE_FILL -> Strings.stretch
+            else -> Strings.originalSize
         }, holdMs = 900)
     }
 
@@ -835,15 +1168,16 @@ class NativePlayer(
             p.seekTo(target)
             flash(
                 if (forward) R.drawable.ic_fast_forward else R.drawable.ic_rewind,
-                (if (forward) "+" else "−") + "$totalSec ث",
-                (if (forward) Gravity.END else Gravity.START) or Gravity.CENTER_VERTICAL,
+                (if (forward) "+" else "−") + Strings.seconds(totalSec),
+                // The side that was tapped (forward is the right third in every language).
+                (if (forward) Gravity.RIGHT else Gravity.LEFT) or Gravity.CENTER_VERTICAL,
             )
         }
 
         override fun onDoubleTapCenter() {
             val p = player ?: return
             if (p.isPlaying) p.pause() else p.play()
-            flash(if (p.playWhenReady) R.drawable.ic_play else R.drawable.ic_pause, if (p.playWhenReady) "تشغيل" else "إيقاف مؤقت")
+            flash(if (p.playWhenReady) R.drawable.ic_play else R.drawable.ic_pause, if (p.playWhenReady) Strings.play else Strings.pause)
         }
 
         override fun onBrightnessStart(): Float {
@@ -896,13 +1230,47 @@ class NativePlayer(
             if (want == resizeMode) return
             resizeMode = want
             view?.resizeMode = want
-            flash(R.drawable.ic_scan, if (zoomIn) "ملء الشاشة" else "الحجم الأصلي", holdMs = 900)
+            flash(R.drawable.ic_scan, if (zoomIn) Strings.fillScreen else Strings.originalSize, holdMs = 900)
         }
+
+        override fun onHoldSpeedStart(): Boolean {
+            val p = player ?: return false
+            val cur = p.playbackParameters.speed
+            // Only a video that is playing, and slower than the hold would make it.
+            if (!p.isPlaying || cur >= HOLD_SPEED) return false
+            holdPrevSpeed = cur
+            holdPlayer = p
+            p.setPlaybackSpeed(HOLD_SPEED)
+            view?.hideController()
+            // Stays up for as long as the finger does (endHoldSpeed takes it down).
+            flash(R.drawable.ic_fast_forward, Strings.doubleSpeed, Gravity.TOP or Gravity.CENTER_HORIZONTAL, holdMs = HOLD_INDICATOR_MS)
+            return true
+        }
+
+        override fun onHoldSpeedEnd() = endHoldSpeed()
 
         override fun onGestureEnd() {}
     }
 
+    /** The finger lifted (or the hold was cut short): back to the speed from before it. */
+    private fun endHoldSpeed() {
+        val prev = holdPrevSpeed ?: return
+        holdPrevSpeed = null
+        val p = holdPlayer
+        holdPlayer = null
+        if (p != null && p === player) p.setPlaybackSpeed(prev)
+        // Unless another message has taken the indicator over meanwhile.
+        if (indicatorText?.text?.toString() == Strings.doubleSpeed) {
+            handler.removeCallbacks(hideIndicator)
+            indicator?.visibility = View.GONE
+        }
+        sendState()
+    }
+
     private fun durationOrMax(p: ExoPlayer) = if (p.duration == C.TIME_UNSET) Long.MAX_VALUE else p.duration
+
+    /** 0 while the length is not known (still loading, or live). */
+    private fun knownDuration(p: ExoPlayer) = if (p.duration == C.TIME_UNSET) 0L else p.duration.coerceAtLeast(0)
 
     private fun formatTime(ms: Long): String {
         val s = ms / 1000
@@ -916,9 +1284,16 @@ class NativePlayer(
     // Panels
     // =========================================================================================
 
-    private fun openPanel(kind: String, titleText: String): SidePanel {
+    private fun openPanel(
+        kind: String,
+        titleText: String,
+        dim: Boolean = true,
+        onOutsideTap: (() -> Unit)? = null,
+        onClose: (() -> Unit)? = null,
+    ): SidePanel {
         panel?.dismiss()
-        val p = SidePanel(activity, root, titleText) {
+        val p = SidePanel(activity, root, titleText, dim, onOutsideTap) {
+            onClose?.invoke()
             if (panel?.isOpen != true) {
                 panelKind = ""
                 updateChrome()
@@ -937,6 +1312,8 @@ class NativePlayer(
             "streams" -> renderStreams()
             "subs" -> renderSubs(subsTab)
             "audio" -> renderAudio()
+            // Another subtitle (or none) took over: the lines listed are no longer the ones drawn.
+            "sync" -> if (syncedSub()?.src != syncPanelFor) panel?.dismiss()
         }
     }
 
@@ -950,7 +1327,7 @@ class NativePlayer(
     // ---- streams ---------------------------------------------------------------------------
 
     private fun openStreams() {
-        openPanel("streams", "المصادر")
+        openPanel("streams", Strings.sources)
         streamsPayload = null
         renderStreams()
         emit(JSONObject().put("type", "requestStreams").toString())
@@ -959,20 +1336,25 @@ class NativePlayer(
     private fun renderStreams() {
         val p = panel ?: return
         p.clear()
+        // Not for a download: see ExternalPlayer.canOpen.
+        if (ExternalPlayer.canOpen(source?.optString("url"))) {
+            p.action(Strings.openInAnotherPlayer, R.drawable.ic_external_link) { openInAnotherPlayer() }
+            if (ExternalPlayer.headerExtras(source?.optJSONObject("headers")).isNotEmpty()) p.note(Strings.anotherPlayerHeadersNote)
+        }
         val data = streamsPayload
         if (data == null) {
-            p.row("جارٍ جلب المصادر…", null, loading = true, onClick = null)
+            p.row(Strings.fetchingSources, null, loading = true, onClick = null)
             return
         }
         val items = data.optJSONArray("items") ?: JSONArray()
         if (items.length() == 0) {
-            p.note(data.optString("message").ifBlank { "ما فيه مصادر ثانية لهذا العنوان." })
+            p.note(data.optString("message").ifBlank { Strings.noOtherSources })
             return
         }
         val qualities = linkedSetOf<String>()
         for (i in 0 until items.length()) items.optJSONObject(i)?.optString("quality")?.takeIf { it.isNotBlank() }?.let { qualities.add(it) }
         if (qualities.size > 1) {
-            p.chips(listOf(Triple("الكل", streamQuality == "all") { streamQuality = "all"; renderStreams() }) +
+            p.chips(listOf(Triple(Strings.all, streamQuality == "all") { streamQuality = "all"; renderStreams() }) +
                 qualities.map { q -> Triple(q, streamQuality == q) { streamQuality = q; renderStreams() } })
         }
         var shown = 0
@@ -997,7 +1379,36 @@ class NativePlayer(
             }
             shown++
         }
-        if (shown == 0) p.note("ما فيه مصادر بهذه الجودة.")
+        if (shown == 0) p.note(Strings.noSourcesInQuality)
+    }
+
+    /** Hands the stream that is playing to another video app, through the system's chooser. This
+     *  player pauses and stays where it is, for when the viewer comes back. */
+    private fun openInAnotherPlayer() {
+        val src = source ?: return
+        val url = src.optString("url")
+        if (!ExternalPlayer.canOpen(url)) return
+        val view = ExternalPlayer.viewIntent(url, title, ExternalPlayer.headerExtras(src.optJSONObject("headers")))
+        // The manifest's <queries> lets this see the installed video players on Android 11+. If
+        // the question itself fails, the chooser is still tried.
+        val found = try {
+            activity.packageManager.queryIntentActivities(view, PackageManager.MATCH_DEFAULT_ONLY).isNotEmpty()
+        } catch (_: Exception) {
+            true
+        }
+        if (!found) {
+            toast(Strings.noVideoPlayerApp)
+            return
+        }
+        player?.pause()
+        panel?.dismiss()
+        try {
+            // NO_USER_ACTION: this is not "the viewer left the app", which would start
+            // picture-in-picture (onUserLeaveHint).
+            activity.startActivity(Intent.createChooser(view, Strings.openInAnotherPlayer).addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION))
+        } catch (_: Exception) {
+            toast(Strings.noVideoPlayerApp)
+        }
     }
 
     // ---- subtitles -------------------------------------------------------------------------
@@ -1006,14 +1417,14 @@ class NativePlayer(
 
     private fun openSubs(tab: String) {
         subsTab = tab
-        openPanel("subs", "الترجمة")
+        openPanel("subs", Strings.subtitles)
         renderSubs(tab)
     }
 
     private fun langName(code: String?): String {
-        if (code.isNullOrBlank() || code.equals("und", true)) return "غير محددة"
+        if (code.isNullOrBlank() || code.equals("und", true)) return Strings.unknownLanguage
         val loc = Locale.forLanguageTag(code)
-        val name = loc.getDisplayLanguage(Locale.getDefault())
+        val name = loc.getDisplayLanguage(Strings.locale)
         return if (name.isNullOrBlank() || name.equals(code, true)) code.uppercase() else name.replaceFirstChar { it.titlecase() }
     }
 
@@ -1030,92 +1441,216 @@ class NativePlayer(
         subsTab = tab
         p.clear()
         p.chips(listOf(
-            Triple("الترجمات", tab == "tracks") { renderSubs("tracks") },
-            Triple("المظهر والتوقيت", tab == "style") { renderSubs("style") },
+            Triple(Strings.subtitlesTab, tab == "tracks") { renderSubs("tracks") },
+            Triple(Strings.secondSubtitleTab, tab == "second") { renderSubs("second") },
+            Triple(Strings.lookAndTiming, tab == "style") { renderSubs("style") },
+            // Straight to the list of lines when there is one subtitle to sync; a tab that asks
+            // which of two, or says why not, otherwise.
+            Triple(Strings.sync, tab == "sync") {
+                val first = canSync(second = false)
+                val second = canSync(second = true)
+                if (first != second) openSync(second) else renderSubs("sync")
+            },
         ))
-        if (tab == "style") {
-            SubtitleControls(activity, subStyle, onStyle = { applySubStyle() }, getDelayMs = { ext?.delayMs ?: 0 }, onDelay = { setSubDelay(it) })
-                .build(p, delayWorks = activeExtId != null)
-            return
+        when (tab) {
+            "style" -> renderLook(p)
+            "sync" -> renderSyncChoice(p)
+            "second" -> renderSecond(p)
+            else -> renderFirst(p)
         }
+    }
+
+    /** "Look and timing". With two subtitles on, the chips at the top say which one the look and
+     *  the delay below are for. */
+    private fun renderLook(p: SidePanel) {
+        val dual = secondId != null
+        if (!dual) editSecond = false
+        if (dual) {
+            p.chips(listOf(
+                Triple(Strings.firstSubtitle, !editSecond) { editSecond = false; renderSubs("style") },
+                Triple(Strings.secondSubtitle, editSecond) { editSecond = true; renderSubs("style") },
+            ))
+        }
+        val second = editSecond
+        val e = if (second) ext2 else ext
+        SubtitleControls(
+            activity, if (second) subStyle2 else subStyle,
+            onStyle = { applySubStyle() },
+            getDelayMs = { subDelayMs(second) },
+            onDelay = { setSubDelay(it, second) },
+            onSync = { openSync(second) },
+            prefs = if (second) SubStyle.PREFS_SECOND else SubStyle.PREFS,
+            defaults = { if (second) SubStyle.secondDefault() else SubStyle() },
+            // Stacked, the second one's place follows the first: nothing to set.
+            positionNote = if (second && DualSubs.stackedNow(subState())) Strings.secondPositionAuto else null,
+        ).build(p, delayWorks = second || activeExtId != null, synced = e?.sync?.let { it.points.isNotEmpty() || it.segments.isNotEmpty() } == true)
+    }
+
+    /** The "Sync" tab: which of two subtitles to sync, or why there is none to sync. */
+    private fun renderSyncChoice(p: SidePanel) {
+        val first = canSync(second = false)
+        val second = canSync(second = true)
+        when {
+            first && second -> {
+                p.note(Strings.syncWhich)
+                p.row(Strings.syncFirstSubtitle, activeSub()?.label) { openSync(second = false) }
+                p.row(Strings.syncSecondSubtitle, secondSub()?.label) { openSync(second = true) }
+            }
+            first || second -> p.action(Strings.syncOpen, R.drawable.ic_audio_lines) { openSync(second) }
+            // Its lines are decoded as the video plays: there is no list of them to pick from.
+            player?.let { selectedEmbedded(it) } != null -> p.note(Strings.syncNotForEmbedded)
+            else -> p.note(Strings.syncNeedsAddonSubtitle)
+        }
+    }
+
+    /** The "Subtitles" tab: the first (or only) subtitle. */
+    private fun renderFirst(p: SidePanel) {
         val pl = player
         val embeddedSelected = pl?.let { selectedEmbedded(it) }
-        p.row("بدون ترجمة", selected = activeExtId == null && embeddedSelected == null) {
+        p.row(Strings.noSubtitles, selected = activeExtId == null && embeddedSelected == null) {
             userPickedSub = true
             selectOff()
+            reportSubChoice(off = true)
         }
 
         // Embedded tracks.
         val embedded = pl?.let { textTracks(it) } ?: emptyList()
         if (embedded.isNotEmpty()) {
-            p.section("مدمجة في الملف (${embedded.size})")
+            p.section(Strings.embedded(embedded.size))
             embedded.forEach { t ->
                 val f = t.group.getTrackFormat(t.index)
                 val sel = activeExtId == null && t.group.isTrackSelected(t.index)
                 val forced = f.selectionFlags and C.SELECTION_FLAG_FORCED != 0
                 p.row(
                     f.label?.takeIf { it.isNotBlank() } ?: langName(f.language),
-                    listOfNotNull(f.language?.let { langName(it) }.takeIf { f.label != null }, if (forced) "إجبارية" else null)
+                    listOfNotNull(f.language?.let { langName(it) }.takeIf { f.label != null }, if (forced) Strings.forced else null)
                         .joinToString(" · ").ifBlank { null },
                     selected = sel,
                 ) {
                     userPickedSub = true
                     selectEmbedded(t)
+                    reportSubChoice(off = false, lang = f.language)
                 }
             }
         }
 
+        renderSubLists(p, "tracks", skip = null, selectedId = activeExtId, busy = loading, withSave = true) { s ->
+            userPickedSub = true
+            selectExternal(s)
+            reportSubChoice(off = false, lang = s.lang)
+            reportSubPicked(s)
+        }
+    }
+
+    /**
+     * The "Second subtitle" tab: a subtitle from the addons (or a saved one) to show together
+     * with the first, and how the two are laid out.
+     */
+    private fun renderSecond(p: SidePanel) {
+        if (secondId != null) {
+            p.section(Strings.dualLayout)
+            p.chips(listOf(
+                Triple(Strings.stacked, dualStacked) { setDualLayout(stacked = true) },
+                Triple(Strings.sideBySide, !dualStacked) { setDualLayout(stacked = false) },
+            ))
+            if (!dualStacked) {
+                val state = subState()
+                when {
+                    // Side by side is chosen, but stacked is what shows: say why.
+                    state.firstIsPicture -> p.note(Strings.stackedForPictureSubtitle)
+                    state.portrait -> p.note(Strings.stackedWhileUpright)
+                    else -> {
+                        val swap = p.action(Strings.swapSides, R.drawable.ic_arrow_up_down) {
+                            dualSwapped = !dualSwapped
+                            saveDualLayout()
+                            layoutSubtitles()
+                        }
+                        // The up-and-down arrows, turned to point left and right.
+                        (swap as? ViewGroup)?.getChildAt(0)?.rotation = 90f
+                    }
+                }
+            }
+        }
+        p.note(Strings.secondFromAddonsNote)
+        if (!hasFirst()) {
+            // A second subtitle never shows by itself: there has to be a first to add it to.
+            p.note(Strings.secondNeedsFirst)
+            if (secondId != null) p.row(Strings.noSecondSubtitle) { turnSecondOff(); refreshPanel() }
+            return
+        }
+        p.row(Strings.noSecondSubtitle, selected = secondId == null && wantedSecond == null) { turnSecondOff(); refreshPanel() }
+        // The first subtitle is left out: one subtitle can't be both.
+        renderSubLists(p, "second", skip = activeSub(), selectedId = secondId, busy = loading2, withSave = false) { s ->
+            if (secondId != s.id) {
+                userPickedSecond = true
+                restore2Url = null
+                selectSecond(s, byViewer = true)
+            }
+        }
+    }
+
+    /**
+     * The saved and the addon subtitles as rows, the addon ones grouped by language under the
+     * language chips: the same lists in the "Subtitles" tab and in "Second subtitle" ([tab] is
+     * the one to draw again after a chip). [skip] is left out, and only the first tab has the
+     * save buttons ([withSave]).
+     */
+    private fun renderSubLists(
+        p: SidePanel,
+        tab: String,
+        skip: CatalogSub?,
+        selectedId: String?,
+        busy: Set<String>,
+        withSave: Boolean,
+        onPick: (CatalogSub) -> Unit,
+    ) {
         // Saved with the download: local files, so they also work offline.
-        if (saved.isNotEmpty()) {
-            p.section("محفوظة على الجهاز (${saved.size})")
-            saved.sortedBy { prefRank(it.lang) }.forEach { s ->
+        val savedShown = if (skip == null) saved else saved.filter { !sameSub(it, skip) }
+        if (savedShown.isNotEmpty()) {
+            p.section(Strings.savedOnDevice(savedShown.size))
+            savedShown.sortedBy { prefRank(it.lang) }.forEach { s ->
                 p.row(
                     s.label,
                     langName(s.lang).takeIf { s.lang != null && !s.label.contains(it) },
-                    selected = activeExtId == s.id,
-                    loading = s.id in loading,
-                ) {
-                    userPickedSub = true
-                    selectExternal(s)
-                }
+                    selected = selectedId == s.id,
+                    loading = s.id in busy,
+                ) { onPick(s) }
             }
         }
 
         // Offline: addon subtitles can't be fetched, so only the saved ones are offered.
         if (!isOnline()) {
-            p.section("من الإضافات")
-            p.note(
-                if (saved.isEmpty()) "أنت بدون إنترنت. ترجمات الإضافات تحتاج إنترنت، وما فيه ترجمات محفوظة مع هذا الفيديو."
-                else "أنت بدون إنترنت، فتظهر الترجمات المحفوظة على الجهاز فقط.",
-            )
+            p.section(Strings.fromAddons)
+            p.note(if (saved.isEmpty()) Strings.offlineNoSaved else Strings.offlineSavedOnly)
             return
         }
 
         // Addon subtitles, grouped by language (the saved ones aren't repeated here).
-        val online = catalog.filter { !isSaved(it) }
-        p.section(if (online.isEmpty()) "من الإضافات" else "من الإضافات (${online.size})")
+        val online = catalog.filter { !isSaved(it) && (skip == null || !sameSub(it, skip)) }
+        p.section(if (online.isEmpty()) Strings.fromAddons else Strings.fromAddonsCount(online.size))
         if (online.isEmpty()) {
-            p.note(if (searching) "جارٍ البحث في الإضافات…" else "ما وصلت ترجمات من الإضافات بعد.")
+            p.note(if (searching) Strings.searchingAddons else Strings.noAddonSubtitlesYet)
         } else {
-            if (downloadId != null) p.note("زر التحميل جنب كل ترجمة يحفظها مع الفيديو عشان تشتغل بدون إنترنت.")
+            val saveButtons = withSave && downloadId != null
+            if (saveButtons) p.note(Strings.saveButtonHint)
             val byLang = online.groupBy { baseLang(it.lang).ifBlank { "und" } }
             val order = byLang.keys.sortedWith(compareBy<String>({ prefRank(it) }, { langName(it) }))
             val chosen = shownLangs ?: loadShownLangs(order).also { shownLangs = it }
             p.chips(
-                listOf(Triple("الكل", chosen.containsAll(order)) {
+                listOf(Triple(Strings.all, chosen.containsAll(order)) {
                     shownLangs = if (chosen.containsAll(order)) mutableSetOf() else order.toMutableSet()
-                    saveShownLangs(); renderSubs("tracks")
+                    saveShownLangs(); renderSubs(tab)
                 }) + order.map { l ->
                     Triple("${langName(l)} ${byLang[l]?.size ?: 0}", l in chosen) {
                         val set = shownLangs ?: mutableSetOf()
                         if (!set.add(l)) set.remove(l)
                         shownLangs = set
-                        saveShownLangs(); renderSubs("tracks")
+                        saveShownLangs(); renderSubs(tab)
                     }
                 },
             )
             val visible = order.filter { it in chosen }
-            if (visible.isEmpty()) p.note("اختر لغة من فوق عشان تظهر ترجماتها.")
+            if (visible.isEmpty()) p.note(Strings.pickLanguageAbove)
             visible.forEach { l ->
                 val list = byLang[l] ?: return@forEach
                 p.section("${langName(l)} (${list.size})")
@@ -1123,25 +1658,39 @@ class NativePlayer(
                     val label = s.label.substringAfter(" · ", s.label)
                     p.row(
                         label,
-                        selected = activeExtId == s.id,
-                        loading = s.id in loading,
-                        actionIcon = if (downloadId != null) R.drawable.ic_download else null,
-                        actionDesc = "حفظ الترجمة مع الفيديو",
+                        selected = selectedId == s.id,
+                        loading = s.id in busy,
+                        actionIcon = if (saveButtons) R.drawable.ic_download else null,
+                        actionDesc = Strings.saveSubtitleWithVideo,
                         actionBusy = s.id in saving,
                         onAction = { saveSub(s) },
-                    ) {
-                        userPickedSub = true
-                        selectExternal(s)
-                    }
+                    ) { onPick(s) }
                 }
             }
         }
-        p.action(if (searching) "جارٍ البحث…" else "جلب ترجمات من الإضافات", R.drawable.ic_refresh_cw) {
+        p.action(if (searching) Strings.searching else Strings.getAddonSubtitles, R.drawable.ic_refresh_cw) {
             if (searching) return@action
             searching = true
             emit(JSONObject().put("type", "subSearch").toString())
-            renderSubs("tracks")
+            renderSubs(tab)
         }
+    }
+
+    /** The viewer's own choice in this panel (not an automatic pick), so the page can remember
+     *  "subtitles off" or the language for this title. */
+    private fun reportSubChoice(off: Boolean, lang: String? = null) {
+        val e = JSONObject().put("type", "subsChoice").put("off", off)
+        if (!off && !lang.isNullOrBlank()) e.put("lang", lang)
+        emit(e.toString())
+    }
+
+    /** The exact addon (or saved) subtitle the viewer picked, sent after its subsChoice, so the
+     *  page can ask for it again the next time this episode plays (play's "restoreSub"). A saved
+     *  one goes by the address it was saved from. */
+    private fun reportSubPicked(s: CatalogSub) {
+        val e = JSONObject().put("type", "subPicked").put("url", s.src).put("label", s.label)
+        if (!s.lang.isNullOrBlank()) e.put("lang", s.lang)
+        emit(e.toString())
     }
 
     private fun loadShownLangs(order: List<String>): MutableSet<String> {
@@ -1200,10 +1749,11 @@ class NativePlayer(
                     saved.firstOrNull { it.src == s.url }?.let { copy ->
                         parsed[s.id]?.let { parsed[copy.id] = it }
                         if (activeExtId == s.id) activeExtId = copy.id
+                        if (secondId == s.id) secondId = copy.id
                     }
-                    toast("انحفظت الترجمة مع الفيديو")
+                    toast(Strings.subtitleSaved)
                 } else {
-                    toast("تعذّر حفظ هذه الترجمة، جرّب غيرها")
+                    toast(Strings.subtitleSaveFailed)
                 }
                 refreshPanel()
             }
@@ -1231,6 +1781,13 @@ class NativePlayer(
     private fun applyTextSelection(p: ExoPlayer) {
         val b = p.trackSelectionParameters.buildUpon()
         if (prefSubLangs.isNotEmpty()) b.setPreferredTextLanguages(*prefSubLangs.toTypedArray())
+        // A file can mark one of its subtitle tracks "default", and the player then shows it
+        // whatever its language. Once the viewer has subtitle languages (Settings), that mark is
+        // ignored: only a track in one of those languages shows by itself. Two things are left as
+        // they were: a "forced" track still shows when it is in the language of the audio that is
+        // playing (it carries the lines spoken in another language), and a track picked in the
+        // panel is an override, which this setting doesn't touch.
+        b.setIgnoredTextSelectionFlags(if (prefSubLangs.isNotEmpty()) C.SELECTION_FLAG_DEFAULT else 0)
         // Settings > Language > preferred audio (it used to be ignored by the native player).
         if (prefAudioLangs.isNotEmpty()) b.setPreferredAudioLanguages(*prefAudioLangs.toTypedArray())
         b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, activeExtId != null || subsOff)
@@ -1241,6 +1798,8 @@ class NativePlayer(
         activeExtId = null
         subsOff = true
         ext?.clear()
+        // "No subtitles" means none at all: the second goes too.
+        turnSecondOff()
         player?.let { applyTextSelection(it) }
         refreshPanel()
     }
@@ -1260,45 +1819,53 @@ class NativePlayer(
     private fun selectExternal(s: CatalogSub, onFail: (() -> Unit)? = null) {
         val cues = parsed[s.id]
         if (cues != null) {
+            if (restoringId == s.id) {
+                // Last time's subtitle is back: it stands like a pick made in the panel.
+                restoringId = null
+                userPickedSub = true
+            }
             activeExtId = s.id
             subsOff = false
-            ext?.set(cues)
+            // With the sync the viewer gave this subtitle before, if any.
+            ext?.set(cues, syncStore.get(s.src))
+            // One subtitle can't be both: now the first, it stops being the second.
+            if (secondSub()?.let { sameSub(it, s) } == true) turnSecondOff()
             player?.let { applyTextSelection(it) }
+            if (secondId != null) layoutSubtitles()
             refreshPanel()
+            tryRestoreSecond()
             return
         }
         if (!loading.add(s.id)) return
         refreshPanel()
-        val gen = contentKey
-        val ua = userAgent
-        subPool.execute {
-            val local = subStore.fetch(s.id, s.url, s.lang, s.label, ua)
-            val list = local?.let { try { ExternalSubs.parse(it) } catch (_: Exception) { null } }
-            handler.post {
-                loading.remove(s.id)
-                if (gen != contentKey) return@post
-                if (list.isNullOrEmpty()) {
-                    if (onFail != null) onFail() else toast("تعذّر تحميل هذه الترجمة، جرّب غيرها")
-                    refreshPanel()
-                    return@post
-                }
-                parsed[s.id] = list
-                if (onFail != null && userPickedSub) return@post // the user chose something else meanwhile
+        fetchCues(s) { list ->
+            loading.remove(s.id)
+            if (list == null) {
+                if (onFail != null) onFail() else toast(Strings.subtitleLoadFailed)
+                refreshPanel()
+            } else if (onFail == null || !userPickedSub) { // not when the user chose something else meanwhile
                 selectExternal(s)
             }
+            // Last time's second subtitle waits for the first one to settle.
+            tryRestoreSecond()
         }
     }
 
     /** Automatic choice: the best addon subtitle in a preferred language, unless an embedded
      *  track in an equally (or more) preferred language is already showing. */
     private fun maybeAutoSelectSub() {
-        if (userPickedSub || autoSubDone || prefSubLangs.isEmpty()) return
+        if (userPickedSub || autoSubDone || subsOff || prefSubLangs.isEmpty()) return
+        if (restoringId != null) return // last time's subtitle is loading; this runs again if it fails
         val p = player ?: return
         if (p.currentTracks.isEmpty) return
         val embeddedRank = selectedEmbedded(p)?.let { prefRank(it.group.getTrackFormat(it.index).language) } ?: 999
         // Saved ones first (local, work offline), then addon ones when online.
         val pool = saved + if (isOnline()) catalog.filter { !isSaved(it) } else emptyList()
-        val candidates = pool.filter { prefRank(it.lang) < embeddedRank }.sortedBy { prefRank(it.lang) }.take(4)
+        // A second subtitle (showing, or about to be put back) already covers its language: an
+        // embedded track in a wanted language is not swapped for another subtitle in that one.
+        // That would leave the same language on screen twice and take the other one away.
+        val covered = if (embeddedRank < 999) (secondSub() ?: restore2Url?.let { findSub(it) })?.let { baseLang(it.lang) }?.takeIf { it.isNotEmpty() } else null
+        val candidates = pool.filter { prefRank(it.lang) < embeddedRank && baseLang(it.lang) != covered }.sortedBy { prefRank(it.lang) }.take(4)
         if (candidates.isEmpty()) return
         autoSubDone = true
         autoTry(candidates, 0)
@@ -1308,6 +1875,325 @@ class NativePlayer(
     private fun autoTry(candidates: List<CatalogSub>, i: Int) {
         if (i >= candidates.size || userPickedSub) return
         selectExternal(candidates[i]) { autoTry(candidates, i + 1) }
+    }
+
+    /**
+     * Puts back the subtitle the viewer picked for this episode last time, once it is in the
+     * lists (it comes with play, or later through addSubs). It takes the place of the automatic
+     * choice; if it can no longer be loaded, the automatic choice goes ahead.
+     */
+    private fun tryRestoreSub() {
+        val url = restoreUrl ?: return
+        if (userPickedSub || subsOff) {
+            restoreUrl = null
+            return
+        }
+        val s = saved.firstOrNull { it.src == url || it.url == url } ?: catalog.firstOrNull { it.url == url } ?: return
+        restoreUrl = null
+        if (activeExtId == s.id) {
+            userPickedSub = true
+            return
+        }
+        restoringId = s.id
+        selectExternal(s) {
+            if (restoringId == s.id) restoringId = null
+            maybeAutoSelectSub()
+        }
+    }
+
+    // ---- second subtitle -------------------------------------------------------------------
+
+    private fun subById(id: String?): CatalogSub? {
+        if (id == null) return null
+        return saved.firstOrNull { it.id == id } ?: catalog.firstOrNull { it.id == id }
+    }
+
+    /** The addon (or saved) subtitle shown as the second one. */
+    private fun secondSub(): CatalogSub? = subById(secondId)
+
+    /** The same subtitle, also when one is the saved copy of the other. */
+    private fun sameSub(a: CatalogSub, b: CatalogSub) = a.id == b.id || a.src == b.src
+
+    /** The subtitle at [url] in the lists: a saved copy first (it works offline). */
+    private fun findSub(url: String): CatalogSub? =
+        saved.firstOrNull { it.src == url || it.url == url } ?: catalog.firstOrNull { it.url == url }
+
+    /** The embedded track that shows as the first subtitle, when that is what the first is. */
+    private fun embeddedFirst(): Format? {
+        if (activeExtId != null) return null
+        val t = player?.let { selectedEmbedded(it) } ?: return null
+        return t.group.getTrackFormat(t.index)
+    }
+
+    private fun hasFirst() = activeExtId != null || embeddedFirst() != null
+
+    /** Blu-ray and DVD subtitles are pictures. Media3 hands a text track over already parsed,
+     *  with what it was in "codecs". */
+    private fun isPictureTrack(f: Format): Boolean {
+        val pictures = setOf(MimeTypes.APPLICATION_PGS, MimeTypes.APPLICATION_VOBSUB, MimeTypes.APPLICATION_DVBSUBS)
+        return f.sampleMimeType in pictures || f.codecs in pictures || f == pictureTrack
+    }
+
+    /**
+     * Downloads and parses a subtitle off the main thread and hands the lines over on it (null:
+     * it couldn't be loaded). Asked for again while it is on its way (as the first and as the
+     * second subtitle), it is still fetched once. Nothing is handed over once another title has
+     * started.
+     */
+    private fun fetchCues(s: CatalogSub, done: (List<CuesWithTiming>?) -> Unit) {
+        fetching[s.id]?.let { it.add(done); return }
+        val waiting = arrayListOf(done)
+        fetching[s.id] = waiting
+        val gen = contentKey
+        val ua = userAgent
+        subPool.execute {
+            val local = subStore.fetch(s.id, s.url, s.lang, s.label, ua)
+            val list = local?.let { try { ExternalSubs.parse(it) } catch (_: Exception) { null } }
+            handler.post {
+                // Another title: its play() has already emptied the list of who waits.
+                if (gen != contentKey) return@post
+                fetching.remove(s.id)
+                val cues = list?.takeIf { it.isNotEmpty() }
+                if (cues != null) parsed[s.id] = cues
+                waiting.forEach { it(cues) }
+            }
+        }
+    }
+
+    /**
+     * Shows [s] as the second subtitle, loading it first if needed. [byViewer]: picked in the
+     * panel (not put back from last time), so the page is told once it shows. Without [onFail] a
+     * failed load says so on screen.
+     */
+    private fun selectSecond(s: CatalogSub, byViewer: Boolean, onFail: (() -> Unit)? = null) {
+        val cues = parsed[s.id]
+        if (cues != null) {
+            showSecond(s, cues, byViewer)
+            return
+        }
+        wantedSecond = s.id
+        if (!loading2.add(s.id)) return
+        refreshPanel()
+        fetchCues(s) { list ->
+            loading2.remove(s.id)
+            when {
+                list == null -> {
+                    if (wantedSecond == s.id) wantedSecond = null
+                    if (onFail != null) onFail() else toast(Strings.subtitleLoadFailed)
+                    refreshPanel()
+                }
+                wantedSecond == s.id -> showSecond(s, list, byViewer)
+                // Another one (or none) was picked meanwhile: this one is only kept ready.
+                else -> refreshPanel()
+            }
+        }
+    }
+
+    private fun showSecond(s: CatalogSub, cues: List<CuesWithTiming>, byViewer: Boolean) {
+        wantedSecond = null
+        // It became the first while it loaded: one subtitle can't be both.
+        if (activeSub()?.let { sameSub(it, s) } == true) {
+            refreshPanel()
+            return
+        }
+        secondId = s.id
+        restore2Url = null
+        // With the sync the viewer gave this subtitle before, if any.
+        ext2?.set(cues, syncStore.get(s.src))
+        // Paused (or closed): one look at the position is enough.
+        ext2?.setRunning(player?.isPlaying == true)
+        if (byViewer) reportSecond(s)
+        layoutSubtitles()
+        refreshPanel()
+    }
+
+    /**
+     * The second subtitle goes: "None" in its tab, "No subtitles", or the same subtitle becoming
+     * the first. Whatever was on its way or waiting to be put back goes too, and the page
+     * forgets it for this episode.
+     */
+    private fun turnSecondOff() {
+        userPickedSecond = true
+        val had = secondId != null || wantedSecond != null || restore2Url != null
+        wantedSecond = null
+        restore2Url = null
+        editSecond = false
+        if (secondId != null) {
+            secondId = null
+            ext2?.clear()
+            layoutSubtitles()
+        }
+        if (had) reportSecond(null)
+    }
+
+    /** The viewer's second subtitle (null: none), so the page can ask for it again the next time
+     *  this episode plays (play's "restoreSub2"). A saved one goes by the address it was saved
+     *  from, like the first (reportSubPicked). */
+    private fun reportSecond(s: CatalogSub?) {
+        val e = JSONObject().put("type", "sub2Picked")
+        if (s == null) {
+            e.put("off", true)
+        } else {
+            e.put("url", s.src).put("label", s.label)
+            if (!s.lang.isNullOrBlank()) e.put("lang", s.lang)
+        }
+        emit(e.toString())
+    }
+
+    /**
+     * Puts back the second subtitle the viewer had on this episode last time, once it is in the
+     * lists and there is a first one to show it with. It waits for the first to settle (its own
+     * restore or automatic choice may still be loading) and leaves both of those alone: it is
+     * not the viewer's pick of the first subtitle.
+     */
+    private fun tryRestoreSecond() {
+        val url = restore2Url ?: return
+        if (userPickedSecond || subsOff || secondId != null) {
+            restore2Url = null
+            return
+        }
+        if (restoringId != null || loading.isNotEmpty() || wantedSecond != null) return
+        val first = activeSub()
+        val embedded = if (first == null) embeddedFirst() else null
+        // Never by itself.
+        if (first == null && embedded == null) return
+        val s = findSub(url) ?: return
+        if (first != null && sameSub(first, s)) return
+        // Next to a first one that was chosen automatically in the same language it would only
+        // say the same thing twice. It still comes back if the viewer picks another first one.
+        val firstLang = baseLang(first?.lang ?: embedded?.language)
+        if (!userPickedSub && firstLang.isNotEmpty() && firstLang == baseLang(s.lang)) return
+        selectSecond(s, byViewer = false) {
+            // It can no longer be loaded: given up for this time, and the automatic choice of
+            // the first is free to use its language again.
+            restore2Url = null
+            maybeAutoSelectSub()
+        }
+    }
+
+    private fun setDualLayout(stacked: Boolean) {
+        dualStacked = stacked
+        saveDualLayout()
+        layoutSubtitles()
+        renderSubs("second")
+    }
+
+    private fun saveDualLayout() {
+        activity.getSharedPreferences("harbor.player", Context.MODE_PRIVATE).edit()
+            .putString("dualLayout", if (dualStacked) DualSubs.STACKED else DualSubs.SIDE_BY_SIDE)
+            .putBoolean("dualSwap", dualSwapped)
+            .apply()
+    }
+
+    // ---- where the subtitles go ------------------------------------------------------------
+
+    /** What DualSubs decides from. With one subtitle only the sync panel and the small window
+     *  matter, so the rest isn't looked up. */
+    private fun subState(): DualSubs.State {
+        val second = secondId != null
+        val embedded = if (second) embeddedFirst() else null
+        val v2 = extView2
+        return DualSubs.State(
+            firstOn = activeExtId != null || embedded != null,
+            secondOn = second,
+            stacked = dualStacked,
+            swapped = dualSwapped,
+            firstLang = if (second) activeSub()?.lang ?: embedded?.language else null,
+            secondLang = secondSub()?.lang,
+            portrait = v2 != null && v2.height > v2.width,
+            firstIsPicture = embedded != null && isPictureTrack(embedded),
+            inPip = inPip,
+            syncing = when {
+                syncPanel == null -> DualSubs.Syncing.NONE
+                syncSecond -> DualSubs.Syncing.SECOND
+                else -> DualSubs.Syncing.FIRST
+            },
+        )
+    }
+
+    /**
+     * Puts every subtitle view where it belongs: the first subtitle's two (PlayerView's own for
+     * an embedded track, extView for an addon one) and the second's. The whole width for one
+     * subtitle; a half each, or one above the other, for two; the part beside the sync panel for
+     * the one being synced; nothing but the first in the small window. A view's text is laid out
+     * inside its padding, so the padding is what moves it.
+     */
+    private fun layoutSubtitles() {
+        val pv = view ?: return
+        val plan = DualSubs.plan(subState())
+        subPlan = plan
+        val panelWidth = if (syncPanel != null) panel?.widthPx ?: 0 else 0
+        val panelOnLeft = activity.uiDirection() == View.LAYOUT_DIRECTION_RTL
+        val edge = insetSide + activity.dp(8)
+        val gutter = activity.dp(6)
+        fun place(sv: SubtitleView?, slot: DualSubs.Slot) {
+            if (sv == null) return
+            // An embedded track's view has the picture's own frame, which can be narrower (or,
+            // zoomed, wider) than the screen: its side is already that far from the screen's.
+            val inset = (pv.width - sv.width) / 2
+            val pad = DualSubs.pad(slot, sv.width, (edge - inset).coerceAtLeast(0), gutter, panelWidth, panelOnLeft)
+            sv.setPadding(pad.left, 0, pad.right, 0)
+            val visibility = if (slot == DualSubs.Slot.HIDDEN) View.INVISIBLE else View.VISIBLE
+            if (sv.visibility != visibility) sv.visibility = visibility
+        }
+        place(extView, plan.first)
+        // Only an addon subtitle is ever synced: the embedded track's view has no part beside
+        // the panel.
+        place(pv.subtitleView, if (plan.first == DualSubs.Slot.BESIDE_PANEL) DualSubs.Slot.FULL else plan.first)
+        place(extView2, plan.second)
+        placeSecond()
+    }
+
+    private fun boxWidth(v: View?) = if (v == null) 0 else v.width - v.paddingLeft - v.paddingRight
+    private fun boxHeight(v: View?) = if (v == null) 0 else v.height - v.paddingTop - v.paddingBottom
+
+    private val screenXY = IntArray(2)
+    private fun boxBottomOnScreen(v: View): Int {
+        v.getLocationOnScreen(screenXY)
+        return screenXY[1] + v.height - v.paddingBottom
+    }
+
+    /**
+     * The second subtitle's distance from the bottom: its own setting, or (stacked) right above
+     * what the first is showing at the moment. This runs on every new line of either while they
+     * are stacked, and only then measures anything.
+     */
+    private fun placeSecond() {
+        val v2 = extView2 ?: return
+        val plan = subPlan ?: return
+        var want = subStyle2.bottom
+        if (plan.secondBottom != DualSubs.Bottom.OWN) {
+            want = subStyle.bottom
+            val v1 = if (activeExtId != null) extView else view?.subtitleView
+            val w1 = boxWidth(v1)
+            val h1 = boxHeight(v1)
+            val w2 = boxWidth(v2)
+            val h2 = boxHeight(v2)
+            if (v1 != null && w1 > 0 && h1 > 0 && w2 > 0 && h2 > 0) {
+                // An embedded track is drawn inside the picture's own frame, which can end
+                // higher than the screen does: how much, so both are counted from one bottom.
+                val shift = if (v1 === extView) 0 else boxBottomOnScreen(v2) - boxBottomOnScreen(v1)
+                val line = (h1 * subStyle.bottom).toInt() + shift
+                var low = line
+                var high = line
+                var secondText = 0
+                if (plan.secondBottom == DualSubs.Bottom.ABOVE_FIRST) {
+                    val cues = if (activeExtId != null) ext?.showing else player?.currentCues?.cues
+                    subMeasure.extent(cues, subStyle, w1, h1)?.let {
+                        low = it.low + shift
+                        high = it.high + shift
+                        secondText = subMeasure.tallest(ext2?.showing, subStyle2, w2, h2)
+                    }
+                }
+                val lift = DualSubs.stackedLift(low, high, secondText, h2, gap = h2 / 100)
+                // Half a pixel more: the painter turns this back into whole pixels, rounding down.
+                want = ((lift + 0.5f) / h2).coerceIn(0f, 1f)
+            }
+        }
+        if (want != secondBottom) {
+            secondBottom = want
+            v2.setBottomPaddingFraction(want)
+        }
     }
 
     private fun addToCatalog(arr: JSONArray?) {
@@ -1331,27 +2217,135 @@ class NativePlayer(
             added++
         }
         if (added == 0) return
+        tryRestoreSub()
         maybeAutoSelectSub()
+        tryRestoreSecond()
         if (panel?.isOpen == true && panelKind == "subs") refreshPanel()
     }
 
     private fun applySubStyle() {
         subStyle.applyTo(view?.subtitleView)
         subStyle.applyTo(extView)
+        subStyle2.applyTo(extView2)
+        secondBottom = subStyle2.bottom
+        // A new size or position moves two subtitles relative to each other.
+        layoutSubtitles()
     }
 
-    private fun setSubDelay(ms: Long) {
-        if (activeExtId == null) {
-            toast("التأخير يشتغل على ترجمات الإضافات")
+    /** The delay the "look and timing" tab shows: a synced subtitle's is its sync's nudge. Each
+     *  of two subtitles has its own. */
+    private fun subDelayMs(second: Boolean): Long {
+        val e = (if (second) ext2 else ext) ?: return 0
+        return e.sync?.let { Math.round(it.nudge * 1000) } ?: e.delayMs
+    }
+
+    private fun setSubDelay(ms: Long, second: Boolean) {
+        if (!second && activeExtId == null) {
+            toast(Strings.delayAddonOnly)
             return
         }
-        ext?.delayMs = ms.coerceIn(-600_000, 600_000)
+        // The second subtitle went while its tab was still showing: nothing to delay.
+        if (second && secondId == null) return
+        val delay = ms.coerceIn(-600_000, 600_000)
+        // A subtitle with a sync state is timed by it alone, so its delay is edited there: the
+        // plain delay on top would move it twice.
+        val e = if (second) ext2 else ext
+        val sync = e?.sync
+        if (sync != null) applySync(TextSync.withNudge(sync, delay / 1000.0), second) else e?.delayMs = delay
+    }
+
+    // ---- subtitle sync ---------------------------------------------------------------------
+
+    /** The addon (or saved) subtitle that is showing (as the first, when there are two). */
+    private fun activeSub(): CatalogSub? = subById(activeExtId)
+
+    /** The first or the second subtitle, as an addon (or saved) one; without [second], the one
+     *  the open sync panel is for. */
+    private fun syncedSub(second: Boolean = syncSecond): CatalogSub? = if (second) secondSub() else activeSub()
+
+    /** Only a subtitle drawn by this player's own renderer has a list of lines to sync. */
+    private fun canSync(second: Boolean) = syncedSub(second) != null && (if (second) ext2 else ext)?.active == true
+
+    /** A new sync state for a subtitle that is showing: drawn at once, and kept on the device
+     *  under the subtitle's address (for a saved one, the address it was saved from). Two
+     *  subtitles have two addresses, so each keeps its own. */
+    private fun applySync(state: TextSync.State, second: Boolean) {
+        val sub = syncedSub(second) ?: return
+        (if (second) ext2 else ext)?.setSync(state)
+        syncStore.put(sub.src, state)
+    }
+
+    /**
+     * Opens the sync panel for a subtitle that is showing. From here on that subtitle is timed
+     * by its sync state alone: the plain delay it had so far becomes the state's nudge, and the
+     * plain delay goes back to zero.
+     */
+    private fun openSync(second: Boolean) {
+        val e = (if (second) ext2 else ext) ?: return
+        val sub = syncedSub(second) ?: return
+        if (!e.active) return
+        if (e.sync == null) {
+            applySync(TextSync.withNudge(TextSync.State(), e.delayMs / 1000.0), second)
+            e.delayMs = 0
+        }
+        // The video is watched and listened to beside this panel: no dimming, and a tap on the
+        // picture pauses or plays instead of closing it.
+        val p = openPanel("sync", Strings.syncSubtitle, dim = false, onOutsideTap = { togglePlay() }, onClose = { closeSync() })
+        // Pausing to look for a line would bring the playback controls up by themselves, under
+        // the panel and out of reach.
+        view?.controllerAutoShow = false
+        syncPanelFor = sub.src
+        syncSecond = second
+        syncPanel = SyncPanel(activity, p, e, syncHost).also { it.build() }
+        // The subtitle itself moves into the part of the picture the panel leaves free, so the
+        // result of an alignment can be read on the video. Of two, only the one being synced
+        // shows meanwhile.
+        layoutSubtitles()
+    }
+
+    private fun closeSync() {
+        syncPanel?.close()
+        syncPanel = null
+        syncPanelFor = null
+        // Back to the whole width, and to both subtitles when there are two.
+        layoutSubtitles()
+        view?.let { v ->
+            v.controllerAutoShow = true
+            // Left paused: the controls it would have shown come up now.
+            if (isShowing && player?.playWhenReady == false) v.showController()
+        }
+    }
+
+    private fun togglePlay() {
+        val p = player ?: return
+        if (p.playWhenReady) p.pause() else p.play()
+    }
+
+    private val syncHost = object : SyncPanel.Host {
+        override fun positionMs(): Long? = player?.currentPosition
+        override fun isPlaying(): Boolean = player?.playWhenReady == true
+        override fun togglePlay() = this@NativePlayer.togglePlay()
+        override fun seekTo(ms: Long) {
+            val p = player ?: return
+            p.seekTo(ms.coerceIn(0, durationOrMax(p)))
+        }
+        override fun setSync(state: TextSync.State) {
+            // Not after the subtitle the panel lists has gone.
+            if (syncedSub()?.src == syncPanelFor) applySync(state, syncSecond)
+        }
+        override fun close() {
+            panel?.dismiss()
+        }
+        override fun keyboardClosed() {
+            // The keyboard can bring the system bars back over the video.
+            if (isShowing) activity.setFullscreenMode(true)
+        }
     }
 
     // ---- audio + speed ---------------------------------------------------------------------
 
     private fun openAudio() {
-        openPanel("audio", "الصوت والسرعة")
+        openPanel("audio", Strings.audioAndSpeed)
         renderAudio()
     }
 
@@ -1371,7 +2365,7 @@ class NativePlayer(
             else -> f.sampleMimeType?.substringAfter('/')?.uppercase()
         }
         val ch = when (f.channelCount) {
-            1 -> "أحادي"; 2 -> "ستيريو"; 6 -> "5.1"; 8 -> "7.1"
+            1 -> Strings.mono; 2 -> Strings.stereo; 6 -> "5.1"; 8 -> "7.1"
             Format.NO_VALUE -> null
             else -> "${f.channelCount}ch"
         }
@@ -1383,8 +2377,8 @@ class NativePlayer(
         val pl = player ?: return
         p.clear()
         val groups = pl.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
-        p.section("المسار الصوتي")
-        if (groups.isEmpty()) p.note("ما فيه مسارات صوت.")
+        p.section(Strings.audioTrack)
+        if (groups.isEmpty()) p.note(Strings.noAudioTracks)
         groups.forEach { g ->
             for (i in 0 until g.length) {
                 if (!g.isTrackSupported(i)) continue
@@ -1401,15 +2395,79 @@ class NativePlayer(
                 }
             }
         }
-        p.section("سرعة التشغيل")
+        p.section(Strings.playbackSpeed)
         val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
         val cur = pl.playbackParameters.speed
         p.chips(speeds.map { s ->
-            Triple((if (s == 1f) "عادي" else "${s}x"), kotlin.math.abs(cur - s) < 0.01f) {
+            Triple((if (s == 1f) Strings.normalSpeed else "${s}x"), kotlin.math.abs(cur - s) < 0.01f) {
                 pl.playbackParameters = PlaybackParameters(s)
                 renderAudio()
             }
         })
+        sleepTitle = p.section(sleepTitleText())
+        // A live channel has no end to wait for.
+        val live = source?.optBoolean("isLive") == true
+        p.chips(
+            listOf(Triple(Strings.sleepOff, !sleep.armed) { setSleep() }) +
+                SleepTimer.PRESETS.map { m -> Triple(Strings.minutes(m), sleep.minutes == m) { setSleep(minutes = m) } } +
+                (if (live) emptyList() else listOf(Triple(Strings.sleepEndOfVideo, sleep.endOfVideo) { setSleep(atEnd = true) })),
+        )
+        handler.removeCallbacks(sleepTitleTick)
+        if (sleep.minutes > 0) handler.postDelayed(sleepTitleTick, SLEEP_TITLE_EVERY_MS)
+    }
+
+    // ---- sleep timer -----------------------------------------------------------------------
+
+    /** The section heading says how long is left while a countdown runs. */
+    private fun sleepTitleText(): String =
+        if (sleep.minutes > 0) Strings.sleepTimerLeft(sleep.remainingMinutes(SystemClock.elapsedRealtime())) else Strings.sleepTimer
+
+    /** Keeps the minutes in the heading current while the panel stays open. */
+    private val sleepTitleTick = object : Runnable {
+        override fun run() {
+            if (panel?.isOpen != true || panelKind != "audio" || sleep.minutes == 0) return
+            sleepTitle?.text = sleepTitleText()
+            handler.postDelayed(this, SLEEP_TITLE_EVERY_MS)
+        }
+    }
+
+    /** A chip of the sleep timer: so many minutes, the end of this video, or (neither) off. */
+    private fun setSleep(minutes: Int = 0, atEnd: Boolean = false) {
+        handler.removeCallbacks(sleepFire)
+        sleepHeld = false
+        when {
+            atEnd -> sleep.setEndOfVideo()
+            minutes > 0 -> handler.postDelayed(sleepFire, sleep.setMinutes(minutes, SystemClock.elapsedRealtime()))
+            else -> sleep.off()
+        }
+        if (panel?.isOpen == true && panelKind == "audio") renderAudio()
+    }
+
+    /** The sleep timer is up: pause where the video is (the player stays open) and say why. */
+    private fun fireSleep() {
+        handler.removeCallbacks(sleepFire)
+        sleep.off()
+        player?.let { p ->
+            sleepHeld = reconnecting
+            p.pause()
+        }
+        flash(R.drawable.ic_pause, Strings.sleepTimerPaused, holdMs = 6000)
+        if (panel?.isOpen == true && panelKind == "audio") renderAudio()
+    }
+
+    /**
+     * "End of this video", when the video got to its very end before the ticker saw it coming (a
+     * seek to the last seconds): pause a few seconds back from the end instead, and keep the end
+     * from the page, which would go on to the next episode or close the player. True when it did.
+     */
+    private fun sleepAtEnd(p: ExoPlayer): Boolean {
+        if (!sleep.endOfVideo) return false
+        val dur = knownDuration(p)
+        fireSleep()
+        if (dur <= 0) return false
+        p.pause()
+        p.seekTo((dur - SleepTimer.END_BACK_OFF_MS).coerceAtLeast(0))
+        return true
     }
 
     // =========================================================================================
@@ -1435,14 +2493,14 @@ class NativePlayer(
             }
             "streamFailed" -> {
                 pickingStream = null
-                toast(c.optString("message").ifBlank { "تعذّر تشغيل هذا المصدر، جرّب غيره" })
+                toast(c.optString("message").ifBlank { Strings.sourceFailedTryAnother })
                 if (panelKind == "streams") renderStreams()
                 return
             }
             "subSearch" -> {
                 searching = false
                 val n = c.optInt("count", 0)
-                if (c.optBoolean("manual")) toast(if (n == 0) "ما لقيت ترجمات من الإضافات" else "لقيت $n ترجمة")
+                if (c.optBoolean("manual")) toast(if (n == 0) Strings.noAddonSubtitlesFound else Strings.subtitlesFound(n))
                 if (panelKind == "subs") refreshPanel()
                 return
             }
@@ -1452,13 +2510,29 @@ class NativePlayer(
                 addToCatalog(c.optJSONArray("subs"))
                 return
             }
+            "segments" -> {
+                // Intro / recap / credits of the title named by contentKey (an empty list: none).
+                val key = c.optString("contentKey", "")
+                if (key != segmentsKey) {
+                    segmentsKey = key
+                    autoSkipped.clear()
+                }
+                segments = SkipSegments.parse(c.optJSONArray("segments"))
+                autoSkipIntro = c.optBoolean("autoSkipIntro", false)
+                updateSkip()
+                return
+            }
         }
         val p = player ?: return
         when (c.optString("cmd")) {
             "play" -> p.play()
             "pause" -> p.pause()
             "seek" -> p.seekTo(c.optLong("ms", 0).coerceAtLeast(0))
-            "rate" -> p.setPlaybackSpeed(c.optDouble("rate", 1.0).toFloat().coerceIn(0.25f, 4f))
+            "rate" -> {
+                val rate = c.optDouble("rate", 1.0).toFloat().coerceIn(0.25f, 4f)
+                // During a hold for double speed it becomes the speed to go back to.
+                if (holdPrevSpeed != null) holdPrevSpeed = rate else p.setPlaybackSpeed(rate)
+            }
             "volume" -> p.volume = c.optDouble("volume", 1.0).toFloat().coerceIn(0f, 1f)
         }
         sendState()
@@ -1484,12 +2558,20 @@ class NativePlayer(
         source = null
         pickingStream = null
         ext?.clear()
+        ext2?.clear()
+        // The sleep timer ends with the player. (The skip segments stay: the page clears them when
+        // it leaves the player, and play() does for another title.)
+        handler.removeCallbacks(sleepFire)
+        handler.removeCallbacks(sleepTitleTick)
+        sleep.off()
+        sleepHeld = false
+        offeredSkip = null; dismissedSkip = null; creditsToEnd = false
         if (locked) setLocked(false)
         view?.let {
             it.player = null
             it.visibility = View.GONE
         }
-        listOfNotNull(topBar, nextButton, indicator, unlockButton).forEach { it.visibility = View.GONE }
+        listOfNotNull(topBar, nextButton, skipButton, indicator, unlockButton).forEach { it.visibility = View.GONE }
         if (brightnessTouched) {
             val a = activity.window.attributes
             a.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
@@ -1513,6 +2595,7 @@ class NativePlayer(
     }
 
     private fun releasePlayer() {
+        endHoldSpeed()
         handler.removeCallbacks(ticker)
         handler.removeCallbacks(reconnect)
         reconnecting = false
@@ -1541,7 +2624,9 @@ class NativePlayer(
                 .put("buffering", p.playbackState == Player.STATE_BUFFERING)
                 .put("ended", p.playbackState == Player.STATE_ENDED)
                 .put("ready", p.playbackState == Player.STATE_READY)
-                .put("rate", p.playbackParameters.speed.toDouble())
+                // A hold for double speed is not the viewer's speed setting: the page keeps seeing
+                // the speed from before it.
+                .put("rate", (holdPrevSpeed ?: p.playbackParameters.speed).toDouble())
                 .put("width", vs.width)
                 .put("height", vs.height)
                 .toString(),
@@ -1569,6 +2654,16 @@ class NativePlayer(
     private companion object {
         /** How long a dropped stream keeps trying before the player gives up and says so. */
         const val RECONNECT_BUDGET_MS = 120_000L
+        const val HTTP_CONNECT_TIMEOUT_MS = 20_000
+        const val HTTP_READ_TIMEOUT_MS = 30_000
+        /** Heights of the two pill buttons in the corner, for stacking one above the other. */
+        const val NEXT_BUTTON_DP = 42
+        const val SKIP_BUTTON_DP = 42
+        /** Holding a finger on the video plays at this speed. */
+        const val HOLD_SPEED = 2f
+        /** Longer than anyone holds: the "2x" indicator is taken down when the finger lifts. */
+        const val HOLD_INDICATOR_MS = 30 * 60_000L
+        const val SLEEP_TITLE_EVERY_MS = 10_000L
     }
 }
 

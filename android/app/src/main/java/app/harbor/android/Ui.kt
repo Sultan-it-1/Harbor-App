@@ -16,6 +16,7 @@ import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.content.ContextCompat
+import androidx.core.view.doOnLayout
 
 /** Colours shared with the web UI (dark theme, warm accent). */
 object HarborColors {
@@ -27,6 +28,14 @@ object HarborColors {
     val SUBTLE = Color.argb(110, 255, 255, 255)
     val CHIP = Color.argb(30, 255, 255, 255)
     val DIVIDER = Color.argb(22, 255, 255, 255)
+}
+
+/** Which way the native player's own views read: the app's language once the page has said it
+ *  (Strings), the phone's until then. */
+fun Context.uiDirection(): Int = when {
+    !Strings.known -> resources.configuration.layoutDirection
+    Strings.arabic -> View.LAYOUT_DIRECTION_RTL
+    else -> View.LAYOUT_DIRECTION_LTR
 }
 
 fun Context.dp(v: Float): Int = (v * resources.displayMetrics.density).toInt()
@@ -70,28 +79,43 @@ fun Context.iconButton(res: Int, desc: String, onClick: () -> Unit) = FrameLayou
 /**
  * Right-hand sheet over the player (landscape), like streaming apps: dimmed scrim,
  * header with title + close, scrollable body. Tapping the scrim closes it.
+ *
+ * A panel the video is watched beside (subtitle sync) leaves the picture as it is ([dim] off)
+ * and can give a tap outside it another job ([onOutsideTap]).
  */
-class SidePanel(private val ctx: Context, private val host: FrameLayout, title: String, private val onClosed: () -> Unit = {}) {
+class SidePanel(
+    private val ctx: Context,
+    private val host: FrameLayout,
+    title: String,
+    dim: Boolean = true,
+    private val onOutsideTap: (() -> Unit)? = null,
+    private val onClosed: () -> Unit = {},
+) {
     private val scrim = FrameLayout(ctx)
     private val panel = LinearLayout(ctx)
     val body = LinearLayout(ctx)
     val header = LinearLayout(ctx)
     private val titleView = ctx.label(title, 17f, bold = true, lines = 1)
     private val scroll = ScrollView(ctx)
+    private var filling: View? = null
+    /** How much of the screen's width the panel covers, on its side (the end side). */
+    val widthPx: Int
     var isOpen = false
         private set
 
     init {
-        scrim.setBackgroundColor(Color.argb(110, 0, 0, 0))
+        scrim.setBackgroundColor(if (dim) Color.argb(110, 0, 0, 0) else Color.TRANSPARENT)
         scrim.isClickable = true
-        scrim.setOnClickListener { dismiss() }
+        scrim.setOnClickListener { if (onOutsideTap != null) onOutsideTap.invoke() else dismiss() }
 
         val metrics = ctx.resources.displayMetrics
         // Right-to-left (Arabic): the panel sits at the left edge, so round the other corners and
         // slide in from the left.
-        val rtl = ctx.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+        scrim.layoutDirection = ctx.uiDirection()
+        val rtl = ctx.uiDirection() == View.LAYOUT_DIRECTION_RTL
         val r = ctx.dp(22).toFloat()
         val width = minOf(ctx.dp(460), (metrics.widthPixels * 0.62f).toInt()).coerceAtLeast(minOf(ctx.dp(320), metrics.widthPixels))
+        widthPx = width
         panel.orientation = LinearLayout.VERTICAL
         panel.isClickable = true // don't let taps fall through to the scrim
         panel.background = GradientDrawable().apply {
@@ -103,7 +127,7 @@ class SidePanel(private val ctx: Context, private val host: FrameLayout, title: 
         header.orientation = LinearLayout.HORIZONTAL
         header.gravity = Gravity.CENTER_VERTICAL
         header.addView(titleView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        header.addView(ctx.iconButton(R.drawable.ic_x, "إغلاق") { dismiss() })
+        header.addView(ctx.iconButton(R.drawable.ic_x, Strings.close) { dismiss() })
         panel.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         body.orientation = LinearLayout.VERTICAL
@@ -120,7 +144,7 @@ class SidePanel(private val ctx: Context, private val host: FrameLayout, title: 
         if (isOpen) return
         isOpen = true
         host.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        val rtl = ctx.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+        val rtl = scrim.layoutDirection == View.LAYOUT_DIRECTION_RTL
         panel.translationX = (if (rtl) -1 else 1) * ctx.dp(80).toFloat()
         panel.alpha = 0f
         panel.animate().translationX(0f).alpha(1f).setDuration(180).start()
@@ -133,17 +157,39 @@ class SidePanel(private val ctx: Context, private val host: FrameLayout, title: 
         onClosed()
     }
 
-    fun clear() = body.removeAllViews()
+    fun clear() {
+        body.removeAllViews()
+        val list = filling ?: return
+        filling = null
+        panel.removeView(list)
+        scroll.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = ctx.dp(6) }
+    }
+
+    /**
+     * Gives the panel's height under the body to [v], a long list that scrolls by itself: inside
+     * the body's own ScrollView every one of its rows would be laid out at once. The body then
+     * takes only the height of what is in it.
+     */
+    fun fill(v: View) {
+        filling?.let { panel.removeView(it) }
+        filling = v
+        scroll.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = ctx.dp(6) }
+        panel.addView(v, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+    }
 
     fun scrollToTop() = scroll.scrollTo(0, 0)
 
     // ---- content builders ---------------------------------------------------------------
 
-    fun section(text: String) {
-        body.addView(ctx.label(text, 12.5f, HarborColors.SUBTLE, bold = true).apply {
+    /** A section heading. Returned so a heading that counts down (the sleep timer) can be updated
+     *  without building the panel again. */
+    fun section(text: String): TextView {
+        val v = ctx.label(text, 12.5f, HarborColors.SUBTLE, bold = true).apply {
             setPadding(ctx.dp(4), ctx.dp(16), 0, ctx.dp(6))
             letterSpacing = 0.06f
-        })
+        }
+        body.addView(v)
+        return v
     }
 
     fun note(text: String) {
@@ -211,14 +257,25 @@ class SidePanel(private val ctx: Context, private val host: FrameLayout, title: 
     /** Horizontally scrolling chips. */
     fun chips(items: List<Triple<String, Boolean, () -> Unit>>) {
         val line = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        var lit: View? = null
         items.forEach { (text, on, click) ->
-            line.addView(chip(text, on, click), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ctx.dp(36)).apply { marginEnd = ctx.dp(8) })
+            val c = chip(text, on, click)
+            if (on && lit == null) lit = c
+            line.addView(c, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ctx.dp(36)).apply { marginEnd = ctx.dp(8) })
         }
-        body.addView(HorizontalScrollView(ctx).apply {
+        val row = HorizontalScrollView(ctx).apply {
             isHorizontalScrollBarEnabled = false
             addView(line)
             setPadding(0, ctx.dp(4), 0, ctx.dp(4))
-        })
+        }
+        body.addView(row)
+        // A row wider than the panel is built again after every tap, back at its start: bring the
+        // chosen chip into view when it is out of it.
+        val chosen = lit ?: return
+        row.doOnLayout {
+            val hidden = chosen.left < row.scrollX || chosen.right > row.scrollX + row.width
+            if (hidden) row.scrollTo(chosen.left - ctx.dp(24), 0)
+        }
     }
 
     fun chip(text: String, on: Boolean, click: () -> Unit) = ctx.label(text, 13.5f, if (on) Color.BLACK else HarborColors.TEXT, bold = on).apply {
