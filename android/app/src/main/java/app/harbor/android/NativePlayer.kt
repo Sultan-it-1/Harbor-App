@@ -291,6 +291,11 @@ class NativePlayer(
             if (panelKind == "sync") panel?.dismiss()
             ext?.delayMs = 0
             ext?.clear()
+            // The second subtitle goes with the title too, and whatever was still loading for it.
+            secondId = null; wantedSecond = null; loading2.clear(); fetching.clear()
+            userPickedSecond = false; restore2Url = null; editSecond = false; pictureTrack = null
+            ext2?.delayMs = 0
+            ext2?.clear()
             // Skip segments belong to a title too, unless the page already sent this one's.
             if (segmentsKey != key) {
                 segments = emptyList()
@@ -317,6 +322,16 @@ class NativePlayer(
             src.optJSONObject("restoreSub")?.optString("url")?.takeIf { it.isNotBlank() }?.let { restoreUrl = it }
         }
         subStyle = SubStyle.load(activity) ?: SubStyle.fromHarbor(src.optJSONObject("subStyle"))
+        // The second subtitle picked for this episode last time. Not over one that is showing,
+        // nor after the viewer has chosen (or cleared) the second in this player's panel.
+        if (!userPickedSecond && !subsOff && secondId == null) {
+            src.optJSONObject("restoreSub2")?.optString("url")?.takeIf { it.isNotBlank() }?.let { restore2Url = it }
+        }
+        subStyle2 = SubStyle.load(activity, SubStyle.PREFS_SECOND) ?: SubStyle.secondDefault()
+        activity.getSharedPreferences("harbor.player", Context.MODE_PRIVATE).let { prefs ->
+            dualStacked = prefs.getString("dualLayout", null) == DualSubs.STACKED
+            dualSwapped = prefs.getBoolean("dualSwap", false)
+        }
         if (pickingStream != null) {
             pickingStream = null
             panel?.dismiss()
@@ -326,8 +341,10 @@ class NativePlayer(
         // The same title opened again after the player was closed: closing emptied the subtitle
         // view, so the subtitle that is still marked as chosen goes back on.
         activeExtId?.let { id -> if (ext?.active == false) parsed[id]?.let { ext?.set(it, activeSub()?.let { s -> syncStore.get(s.src) }) } }
+        secondId?.let { id -> if (ext2?.active == false) parsed[id]?.let { ext2?.set(it, secondSub()?.let { s -> syncStore.get(s.src) }) } }
         addToCatalog(src.optJSONArray("subtitles"))
         tryRestoreSub()
+        tryRestoreSecond()
     }
 
     private fun buildItem(src: JSONObject): MediaItem {
@@ -390,6 +407,7 @@ class NativePlayer(
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 updateKeepScreenOn()
                 ext?.setRunning(isPlaying)
+                ext2?.setRunning(isPlaying)
                 restartTicker()
                 sendState()
             }
@@ -402,6 +420,7 @@ class NativePlayer(
 
             override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
                 ext?.refresh()
+                ext2?.refresh()
                 // A seek can land in a segment, or leave one, while the video is paused.
                 updateSkip()
             }
@@ -415,7 +434,27 @@ class NativePlayer(
                 matchRefreshToVideo()
                 updateChrome()
                 maybeAutoSelectSub()
+                // The first subtitle may be another embedded track now, or none: the second is
+                // laid out by it, and last time's second waits for a first to come back to.
+                if (secondId != null) layoutSubtitles()
+                tryRestoreSecond()
                 if (panel?.isOpen == true && (panelKind == "subs" || panelKind == "audio")) refreshPanel()
+            }
+
+            override fun onCues(cueGroup: CueGroup) {
+                // The lines of an embedded track (PlayerView draws them). Only a second subtitle
+                // needs to know: stacked, it sits right above them.
+                if (secondId == null || activeExtId != null) return
+                if (cueGroup.cues.any { it.bitmap != null }) {
+                    val track = embeddedFirst()
+                    if (track != null && track != pictureTrack) {
+                        // Pictures, though the track didn't say so: side by side would squash them.
+                        pictureTrack = track
+                        layoutSubtitles()
+                        return
+                    }
+                }
+                if (subPlan?.secondBottom == DualSubs.Bottom.ABOVE_FIRST) placeSecond()
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -608,6 +647,8 @@ class NativePlayer(
         } else {
             updateChrome()
         }
+        // The small window shows the first subtitle only; the second comes back with full screen.
+        layoutSubtitles()
     }
 
     /** Fullscreen draws edge to edge: keep the controls clear of the camera cutout and of the
@@ -632,6 +673,8 @@ class NativePlayer(
             lp.marginStart = ctx.dp(32) + side
             unlockButton?.layoutParams = lp
         }
+        // Side by side, the two subtitles keep clear of the cutout as well.
+        if (secondId != null) layoutSubtitles()
     }
 
     private fun jsonStrings(a: JSONArray?): List<String> {
@@ -655,8 +698,7 @@ class NativePlayer(
         v.player = p
         v.visibility = View.VISIBLE
         v.bringToFront()
-        subStyle.applyTo(v.subtitleView)
-        subStyle.applyTo(extView)
+        applySubStyle()
         listOfNotNull(topBar, nextButton, skipButton, indicator, unlockButton).forEach { it.bringToFront() }
         updateChrome()
         activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -698,6 +740,27 @@ class NativePlayer(
         (pv.overlayFrameLayout ?: pv).addView(sv, FrameLayout.LayoutParams(MainActivity.MATCH, MainActivity.MATCH))
         extView = sv
         ext = ExternalSubs(sv) { player?.currentPosition }
+
+        // A second subtitle, shown together with the first, has a view and a renderer of its own.
+        val sv2 = SubtitleView(activity)
+        (pv.overlayFrameLayout ?: pv).addView(sv2, FrameLayout.LayoutParams(MainActivity.MATCH, MainActivity.MATCH))
+        extView2 = sv2
+        ext2 = ExternalSubs(sv2, ownBottom = true) { player?.currentPosition }
+        // Stacked, the second sits right above the first one's lines: it is placed again whenever
+        // either of them shows another line.
+        val restack = { if (subPlan?.secondBottom == DualSubs.Bottom.ABOVE_FIRST) placeSecond() }
+        ext?.onShown = restack
+        ext2?.onShown = restack
+        // A new size (the phone turned, a picture of another shape) moves the halves and the
+        // lines. After this layout pass, since it changes the views' padding.
+        val resized = View.OnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (secondId != null && (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop)) {
+                handler.removeCallbacks(relayoutSubs)
+                handler.post(relayoutSubs)
+            }
+        }
+        sv2.addOnLayoutChangeListener(resized)
+        pv.subtitleView?.addOnLayoutChangeListener(resized)
 
         // One even shade over the whole picture while the controls show, edge to edge, a little
         // darker at the top and bottom where the text sits. Above the video and subtitles, below
@@ -1249,7 +1312,7 @@ class NativePlayer(
             "subs" -> renderSubs(subsTab)
             "audio" -> renderAudio()
             // Another subtitle (or none) took over: the lines listed are no longer the ones drawn.
-            "sync" -> if (activeSub()?.src != syncPanelFor) panel?.dismiss()
+            "sync" -> if (syncedSub()?.src != syncPanelFor) panel?.dismiss()
         }
     }
 
@@ -1378,30 +1441,69 @@ class NativePlayer(
         p.clear()
         p.chips(listOf(
             Triple(Strings.subtitlesTab, tab == "tracks") { renderSubs("tracks") },
+            Triple(Strings.secondSubtitleTab, tab == "second") { renderSubs("second") },
             Triple(Strings.lookAndTiming, tab == "style") { renderSubs("style") },
-            // Straight to the list of lines when there is a subtitle to sync; a tab that says why
-            // not otherwise.
-            Triple(Strings.sync, tab == "sync") { if (canSync()) openSync() else renderSubs("sync") },
+            // Straight to the list of lines when there is one subtitle to sync; a tab that asks
+            // which of two, or says why not, otherwise.
+            Triple(Strings.sync, tab == "sync") {
+                val first = canSync(second = false)
+                val second = canSync(second = true)
+                if (first != second) openSync(second) else renderSubs("sync")
+            },
         ))
-        if (tab == "style") {
-            SubtitleControls(
-                activity, subStyle,
-                onStyle = { applySubStyle() },
-                getDelayMs = { subDelayMs() },
-                onDelay = { setSubDelay(it) },
-                onSync = { openSync() },
-            ).build(p, delayWorks = activeExtId != null, synced = ext?.sync?.let { it.points.isNotEmpty() || it.segments.isNotEmpty() } == true)
-            return
+        when (tab) {
+            "style" -> renderLook(p)
+            "sync" -> renderSyncChoice(p)
+            "second" -> renderSecond(p)
+            else -> renderFirst(p)
         }
-        if (tab == "sync") {
-            when {
-                canSync() -> p.action(Strings.syncOpen, R.drawable.ic_audio_lines) { openSync() }
-                // Its lines are decoded as the video plays: there is no list of them to pick from.
-                player?.let { selectedEmbedded(it) } != null -> p.note(Strings.syncNotForEmbedded)
-                else -> p.note(Strings.syncNeedsAddonSubtitle)
+    }
+
+    /** "Look and timing". With two subtitles on, the chips at the top say which one the look and
+     *  the delay below are for. */
+    private fun renderLook(p: SidePanel) {
+        val dual = secondId != null
+        if (!dual) editSecond = false
+        if (dual) {
+            p.chips(listOf(
+                Triple(Strings.firstSubtitle, !editSecond) { editSecond = false; renderSubs("style") },
+                Triple(Strings.secondSubtitle, editSecond) { editSecond = true; renderSubs("style") },
+            ))
+        }
+        val second = editSecond
+        val e = if (second) ext2 else ext
+        SubtitleControls(
+            activity, if (second) subStyle2 else subStyle,
+            onStyle = { applySubStyle() },
+            getDelayMs = { subDelayMs(second) },
+            onDelay = { setSubDelay(it, second) },
+            onSync = { openSync(second) },
+            prefs = if (second) SubStyle.PREFS_SECOND else SubStyle.PREFS,
+            defaults = { if (second) SubStyle.secondDefault() else SubStyle() },
+            // Stacked, the second one's place follows the first: nothing to set.
+            positionNote = if (second && DualSubs.stackedNow(subState())) Strings.secondPositionAuto else null,
+        ).build(p, delayWorks = second || activeExtId != null, synced = e?.sync?.let { it.points.isNotEmpty() || it.segments.isNotEmpty() } == true)
+    }
+
+    /** The "Sync" tab: which of two subtitles to sync, or why there is none to sync. */
+    private fun renderSyncChoice(p: SidePanel) {
+        val first = canSync(second = false)
+        val second = canSync(second = true)
+        when {
+            first && second -> {
+                p.note(Strings.syncWhich)
+                p.row(Strings.syncFirstSubtitle, activeSub()?.label) { openSync(second = false) }
+                p.row(Strings.syncSecondSubtitle, secondSub()?.label) { openSync(second = true) }
             }
-            return
+            first || second -> p.action(Strings.syncOpen, R.drawable.ic_audio_lines) { openSync(second) }
+            // Its lines are decoded as the video plays: there is no list of them to pick from.
+            player?.let { selectedEmbedded(it) } != null -> p.note(Strings.syncNotForEmbedded)
+            else -> p.note(Strings.syncNeedsAddonSubtitle)
         }
+    }
+
+    /** The "Subtitles" tab: the first (or only) subtitle. */
+    private fun renderFirst(p: SidePanel) {
         val pl = player
         val embeddedSelected = pl?.let { selectedEmbedded(it) }
         p.row(Strings.noSubtitles, selected = activeExtId == null && embeddedSelected == null) {
@@ -1431,21 +1533,87 @@ class NativePlayer(
             }
         }
 
+        renderSubLists(p, "tracks", skip = null, selectedId = activeExtId, busy = loading, withSave = true) { s ->
+            userPickedSub = true
+            selectExternal(s)
+            reportSubChoice(off = false, lang = s.lang)
+            reportSubPicked(s)
+        }
+    }
+
+    /**
+     * The "Second subtitle" tab: a subtitle from the addons (or a saved one) to show together
+     * with the first, and how the two are laid out.
+     */
+    private fun renderSecond(p: SidePanel) {
+        if (secondId != null) {
+            p.section(Strings.dualLayout)
+            p.chips(listOf(
+                Triple(Strings.sideBySide, !dualStacked) { setDualLayout(stacked = false) },
+                Triple(Strings.stacked, dualStacked) { setDualLayout(stacked = true) },
+            ))
+            if (!dualStacked) {
+                val state = subState()
+                when {
+                    // Side by side is chosen, but stacked is what shows: say why.
+                    state.firstIsPicture -> p.note(Strings.stackedForPictureSubtitle)
+                    state.portrait -> p.note(Strings.stackedWhileUpright)
+                    else -> {
+                        val swap = p.action(Strings.swapSides, R.drawable.ic_arrow_up_down) {
+                            dualSwapped = !dualSwapped
+                            saveDualLayout()
+                            layoutSubtitles()
+                        }
+                        // The up-and-down arrows, turned to point left and right.
+                        (swap as? ViewGroup)?.getChildAt(0)?.rotation = 90f
+                    }
+                }
+            }
+        }
+        p.note(Strings.secondFromAddonsNote)
+        if (!hasFirst()) {
+            // A second subtitle never shows by itself: there has to be a first to add it to.
+            p.note(Strings.secondNeedsFirst)
+            if (secondId != null) p.row(Strings.noSecondSubtitle) { turnSecondOff(); refreshPanel() }
+            return
+        }
+        p.row(Strings.noSecondSubtitle, selected = secondId == null && wantedSecond == null) { turnSecondOff(); refreshPanel() }
+        // The first subtitle is left out: one subtitle can't be both.
+        renderSubLists(p, "second", skip = activeSub(), selectedId = secondId, busy = loading2, withSave = false) { s ->
+            if (secondId != s.id) {
+                userPickedSecond = true
+                restore2Url = null
+                selectSecond(s, byViewer = true)
+            }
+        }
+    }
+
+    /**
+     * The saved and the addon subtitles as rows, the addon ones grouped by language under the
+     * language chips: the same lists in the "Subtitles" tab and in "Second subtitle" ([tab] is
+     * the one to draw again after a chip). [skip] is left out, and only the first tab has the
+     * save buttons ([withSave]).
+     */
+    private fun renderSubLists(
+        p: SidePanel,
+        tab: String,
+        skip: CatalogSub?,
+        selectedId: String?,
+        busy: Set<String>,
+        withSave: Boolean,
+        onPick: (CatalogSub) -> Unit,
+    ) {
         // Saved with the download: local files, so they also work offline.
-        if (saved.isNotEmpty()) {
-            p.section(Strings.savedOnDevice(saved.size))
-            saved.sortedBy { prefRank(it.lang) }.forEach { s ->
+        val savedShown = if (skip == null) saved else saved.filter { !sameSub(it, skip) }
+        if (savedShown.isNotEmpty()) {
+            p.section(Strings.savedOnDevice(savedShown.size))
+            savedShown.sortedBy { prefRank(it.lang) }.forEach { s ->
                 p.row(
                     s.label,
                     langName(s.lang).takeIf { s.lang != null && !s.label.contains(it) },
-                    selected = activeExtId == s.id,
-                    loading = s.id in loading,
-                ) {
-                    userPickedSub = true
-                    selectExternal(s)
-                    reportSubChoice(off = false, lang = s.lang)
-                    reportSubPicked(s)
-                }
+                    selected = selectedId == s.id,
+                    loading = s.id in busy,
+                ) { onPick(s) }
             }
         }
 
@@ -1457,25 +1625,26 @@ class NativePlayer(
         }
 
         // Addon subtitles, grouped by language (the saved ones aren't repeated here).
-        val online = catalog.filter { !isSaved(it) }
+        val online = catalog.filter { !isSaved(it) && (skip == null || !sameSub(it, skip)) }
         p.section(if (online.isEmpty()) Strings.fromAddons else Strings.fromAddonsCount(online.size))
         if (online.isEmpty()) {
             p.note(if (searching) Strings.searchingAddons else Strings.noAddonSubtitlesYet)
         } else {
-            if (downloadId != null) p.note(Strings.saveButtonHint)
+            val saveButtons = withSave && downloadId != null
+            if (saveButtons) p.note(Strings.saveButtonHint)
             val byLang = online.groupBy { baseLang(it.lang).ifBlank { "und" } }
             val order = byLang.keys.sortedWith(compareBy<String>({ prefRank(it) }, { langName(it) }))
             val chosen = shownLangs ?: loadShownLangs(order).also { shownLangs = it }
             p.chips(
                 listOf(Triple(Strings.all, chosen.containsAll(order)) {
                     shownLangs = if (chosen.containsAll(order)) mutableSetOf() else order.toMutableSet()
-                    saveShownLangs(); renderSubs("tracks")
+                    saveShownLangs(); renderSubs(tab)
                 }) + order.map { l ->
                     Triple("${langName(l)} ${byLang[l]?.size ?: 0}", l in chosen) {
                         val set = shownLangs ?: mutableSetOf()
                         if (!set.add(l)) set.remove(l)
                         shownLangs = set
-                        saveShownLangs(); renderSubs("tracks")
+                        saveShownLangs(); renderSubs(tab)
                     }
                 },
             )
@@ -1488,18 +1657,13 @@ class NativePlayer(
                     val label = s.label.substringAfter(" · ", s.label)
                     p.row(
                         label,
-                        selected = activeExtId == s.id,
-                        loading = s.id in loading,
-                        actionIcon = if (downloadId != null) R.drawable.ic_download else null,
+                        selected = selectedId == s.id,
+                        loading = s.id in busy,
+                        actionIcon = if (saveButtons) R.drawable.ic_download else null,
                         actionDesc = Strings.saveSubtitleWithVideo,
                         actionBusy = s.id in saving,
                         onAction = { saveSub(s) },
-                    ) {
-                        userPickedSub = true
-                        selectExternal(s)
-                        reportSubChoice(off = false, lang = s.lang)
-                        reportSubPicked(s)
-                    }
+                    ) { onPick(s) }
                 }
             }
         }
@@ -1507,7 +1671,7 @@ class NativePlayer(
             if (searching) return@action
             searching = true
             emit(JSONObject().put("type", "subSearch").toString())
-            renderSubs("tracks")
+            renderSubs(tab)
         }
     }
 
@@ -1584,6 +1748,7 @@ class NativePlayer(
                     saved.firstOrNull { it.src == s.url }?.let { copy ->
                         parsed[s.id]?.let { parsed[copy.id] = it }
                         if (activeExtId == s.id) activeExtId = copy.id
+                        if (secondId == s.id) secondId = copy.id
                     }
                     toast(Strings.subtitleSaved)
                 } else {
@@ -1632,6 +1797,8 @@ class NativePlayer(
         activeExtId = null
         subsOff = true
         ext?.clear()
+        // "No subtitles" means none at all: the second goes too.
+        turnSecondOff()
         player?.let { applyTextSelection(it) }
         refreshPanel()
     }
@@ -1660,29 +1827,26 @@ class NativePlayer(
             subsOff = false
             // With the sync the viewer gave this subtitle before, if any.
             ext?.set(cues, syncStore.get(s.src))
+            // One subtitle can't be both: now the first, it stops being the second.
+            if (secondSub()?.let { sameSub(it, s) } == true) turnSecondOff()
             player?.let { applyTextSelection(it) }
+            if (secondId != null) layoutSubtitles()
             refreshPanel()
+            tryRestoreSecond()
             return
         }
         if (!loading.add(s.id)) return
         refreshPanel()
-        val gen = contentKey
-        val ua = userAgent
-        subPool.execute {
-            val local = subStore.fetch(s.id, s.url, s.lang, s.label, ua)
-            val list = local?.let { try { ExternalSubs.parse(it) } catch (_: Exception) { null } }
-            handler.post {
-                loading.remove(s.id)
-                if (gen != contentKey) return@post
-                if (list.isNullOrEmpty()) {
-                    if (onFail != null) onFail() else toast(Strings.subtitleLoadFailed)
-                    refreshPanel()
-                    return@post
-                }
-                parsed[s.id] = list
-                if (onFail != null && userPickedSub) return@post // the user chose something else meanwhile
+        fetchCues(s) { list ->
+            loading.remove(s.id)
+            if (list == null) {
+                if (onFail != null) onFail() else toast(Strings.subtitleLoadFailed)
+                refreshPanel()
+            } else if (onFail == null || !userPickedSub) { // not when the user chose something else meanwhile
                 selectExternal(s)
             }
+            // Last time's second subtitle waits for the first one to settle.
+            tryRestoreSecond()
         }
     }
 
@@ -1696,7 +1860,11 @@ class NativePlayer(
         val embeddedRank = selectedEmbedded(p)?.let { prefRank(it.group.getTrackFormat(it.index).language) } ?: 999
         // Saved ones first (local, work offline), then addon ones when online.
         val pool = saved + if (isOnline()) catalog.filter { !isSaved(it) } else emptyList()
-        val candidates = pool.filter { prefRank(it.lang) < embeddedRank }.sortedBy { prefRank(it.lang) }.take(4)
+        // A second subtitle (showing, or about to be put back) already covers its language: an
+        // embedded track in a wanted language is not swapped for another subtitle in that one.
+        // That would leave the same language on screen twice and take the other one away.
+        val covered = if (embeddedRank < 999) (secondSub() ?: restore2Url?.let { findSub(it) })?.let { baseLang(it.lang) }?.takeIf { it.isNotEmpty() } else null
+        val candidates = pool.filter { prefRank(it.lang) < embeddedRank && baseLang(it.lang) != covered }.sortedBy { prefRank(it.lang) }.take(4)
         if (candidates.isEmpty()) return
         autoSubDone = true
         autoTry(candidates, 0)
@@ -1732,6 +1900,301 @@ class NativePlayer(
         }
     }
 
+    // ---- second subtitle -------------------------------------------------------------------
+
+    private fun subById(id: String?): CatalogSub? {
+        if (id == null) return null
+        return saved.firstOrNull { it.id == id } ?: catalog.firstOrNull { it.id == id }
+    }
+
+    /** The addon (or saved) subtitle shown as the second one. */
+    private fun secondSub(): CatalogSub? = subById(secondId)
+
+    /** The same subtitle, also when one is the saved copy of the other. */
+    private fun sameSub(a: CatalogSub, b: CatalogSub) = a.id == b.id || a.src == b.src
+
+    /** The subtitle at [url] in the lists: a saved copy first (it works offline). */
+    private fun findSub(url: String): CatalogSub? =
+        saved.firstOrNull { it.src == url || it.url == url } ?: catalog.firstOrNull { it.url == url }
+
+    /** The embedded track that shows as the first subtitle, when that is what the first is. */
+    private fun embeddedFirst(): Format? {
+        if (activeExtId != null) return null
+        val t = player?.let { selectedEmbedded(it) } ?: return null
+        return t.group.getTrackFormat(t.index)
+    }
+
+    private fun hasFirst() = activeExtId != null || embeddedFirst() != null
+
+    /** Blu-ray and DVD subtitles are pictures. Media3 hands a text track over already parsed,
+     *  with what it was in "codecs". */
+    private fun isPictureTrack(f: Format): Boolean {
+        val pictures = setOf(MimeTypes.APPLICATION_PGS, MimeTypes.APPLICATION_VOBSUB, MimeTypes.APPLICATION_DVBSUBS)
+        return f.sampleMimeType in pictures || f.codecs in pictures || f == pictureTrack
+    }
+
+    /**
+     * Downloads and parses a subtitle off the main thread and hands the lines over on it (null:
+     * it couldn't be loaded). Asked for again while it is on its way (as the first and as the
+     * second subtitle), it is still fetched once. Nothing is handed over once another title has
+     * started.
+     */
+    private fun fetchCues(s: CatalogSub, done: (List<CuesWithTiming>?) -> Unit) {
+        fetching[s.id]?.let { it.add(done); return }
+        val waiting = arrayListOf(done)
+        fetching[s.id] = waiting
+        val gen = contentKey
+        val ua = userAgent
+        subPool.execute {
+            val local = subStore.fetch(s.id, s.url, s.lang, s.label, ua)
+            val list = local?.let { try { ExternalSubs.parse(it) } catch (_: Exception) { null } }
+            handler.post {
+                // Another title: its play() has already emptied the list of who waits.
+                if (gen != contentKey) return@post
+                fetching.remove(s.id)
+                val cues = list?.takeIf { it.isNotEmpty() }
+                if (cues != null) parsed[s.id] = cues
+                waiting.forEach { it(cues) }
+            }
+        }
+    }
+
+    /**
+     * Shows [s] as the second subtitle, loading it first if needed. [byViewer]: picked in the
+     * panel (not put back from last time), so the page is told once it shows. Without [onFail] a
+     * failed load says so on screen.
+     */
+    private fun selectSecond(s: CatalogSub, byViewer: Boolean, onFail: (() -> Unit)? = null) {
+        val cues = parsed[s.id]
+        if (cues != null) {
+            showSecond(s, cues, byViewer)
+            return
+        }
+        wantedSecond = s.id
+        if (!loading2.add(s.id)) return
+        refreshPanel()
+        fetchCues(s) { list ->
+            loading2.remove(s.id)
+            when {
+                list == null -> {
+                    if (wantedSecond == s.id) wantedSecond = null
+                    if (onFail != null) onFail() else toast(Strings.subtitleLoadFailed)
+                    refreshPanel()
+                }
+                wantedSecond == s.id -> showSecond(s, list, byViewer)
+                // Another one (or none) was picked meanwhile: this one is only kept ready.
+                else -> refreshPanel()
+            }
+        }
+    }
+
+    private fun showSecond(s: CatalogSub, cues: List<CuesWithTiming>, byViewer: Boolean) {
+        wantedSecond = null
+        // It became the first while it loaded: one subtitle can't be both.
+        if (activeSub()?.let { sameSub(it, s) } == true) {
+            refreshPanel()
+            return
+        }
+        secondId = s.id
+        restore2Url = null
+        // With the sync the viewer gave this subtitle before, if any.
+        ext2?.set(cues, syncStore.get(s.src))
+        // Paused (or closed): one look at the position is enough.
+        ext2?.setRunning(player?.isPlaying == true)
+        if (byViewer) reportSecond(s)
+        layoutSubtitles()
+        refreshPanel()
+    }
+
+    /**
+     * The second subtitle goes, by the viewer's doing: "None" in its tab, "No subtitles", or
+     * picking it as the first. Whatever was on its way or waiting to be put back goes too, and
+     * the page forgets it for this episode.
+     */
+    private fun turnSecondOff() {
+        userPickedSecond = true
+        val had = secondId != null || wantedSecond != null || restore2Url != null
+        wantedSecond = null
+        restore2Url = null
+        editSecond = false
+        if (secondId != null) {
+            secondId = null
+            ext2?.clear()
+            layoutSubtitles()
+        }
+        if (had) reportSecond(null)
+    }
+
+    /** The viewer's second subtitle (null: none), so the page can ask for it again the next time
+     *  this episode plays (play's "restoreSub2"). A saved one goes by the address it was saved
+     *  from, like the first (reportSubPicked). */
+    private fun reportSecond(s: CatalogSub?) {
+        val e = JSONObject().put("type", "sub2Picked")
+        if (s == null) {
+            e.put("off", true)
+        } else {
+            e.put("url", s.src).put("label", s.label)
+            if (!s.lang.isNullOrBlank()) e.put("lang", s.lang)
+        }
+        emit(e.toString())
+    }
+
+    /**
+     * Puts back the second subtitle the viewer had on this episode last time, once it is in the
+     * lists and there is a first one to show it with. It waits for the first to settle (its own
+     * restore or automatic choice may still be loading) and leaves both of those alone: it is
+     * not the viewer's pick of the first subtitle.
+     */
+    private fun tryRestoreSecond() {
+        val url = restore2Url ?: return
+        if (userPickedSecond || subsOff || secondId != null) {
+            restore2Url = null
+            return
+        }
+        if (restoringId != null || loading.isNotEmpty() || wantedSecond != null) return
+        val first = activeSub()
+        val embedded = if (first == null) embeddedFirst() else null
+        // Never by itself.
+        if (first == null && embedded == null) return
+        val s = findSub(url) ?: return
+        if (first != null && sameSub(first, s)) return
+        // Next to a first one that was chosen automatically in the same language it would only
+        // say the same thing twice. It still comes back if the viewer picks another first one.
+        val firstLang = baseLang(first?.lang ?: embedded?.language)
+        if (!userPickedSub && firstLang.isNotEmpty() && firstLang == baseLang(s.lang)) return
+        selectSecond(s, byViewer = false) {
+            // It can no longer be loaded: given up for this time, and the automatic choice of
+            // the first is free to use its language again.
+            restore2Url = null
+            maybeAutoSelectSub()
+        }
+    }
+
+    private fun setDualLayout(stacked: Boolean) {
+        dualStacked = stacked
+        saveDualLayout()
+        layoutSubtitles()
+        renderSubs("second")
+    }
+
+    private fun saveDualLayout() {
+        activity.getSharedPreferences("harbor.player", Context.MODE_PRIVATE).edit()
+            .putString("dualLayout", if (dualStacked) DualSubs.STACKED else DualSubs.SIDE_BY_SIDE)
+            .putBoolean("dualSwap", dualSwapped)
+            .apply()
+    }
+
+    // ---- where the subtitles go ------------------------------------------------------------
+
+    /** What DualSubs decides from. With one subtitle only the sync panel and the small window
+     *  matter, so the rest isn't looked up. */
+    private fun subState(): DualSubs.State {
+        val second = secondId != null
+        val embedded = if (second) embeddedFirst() else null
+        val v2 = extView2
+        return DualSubs.State(
+            firstOn = activeExtId != null || embedded != null,
+            secondOn = second,
+            stacked = dualStacked,
+            swapped = dualSwapped,
+            firstLang = if (second) activeSub()?.lang ?: embedded?.language else null,
+            secondLang = secondSub()?.lang,
+            portrait = v2 != null && v2.height > v2.width,
+            firstIsPicture = embedded != null && isPictureTrack(embedded),
+            inPip = inPip,
+            syncing = when {
+                syncPanel == null -> DualSubs.Syncing.NONE
+                syncSecond -> DualSubs.Syncing.SECOND
+                else -> DualSubs.Syncing.FIRST
+            },
+        )
+    }
+
+    /**
+     * Puts every subtitle view where it belongs: the first subtitle's two (PlayerView's own for
+     * an embedded track, extView for an addon one) and the second's. The whole width for one
+     * subtitle; a half each, or one above the other, for two; the part beside the sync panel for
+     * the one being synced; nothing but the first in the small window. A view's text is laid out
+     * inside its padding, so the padding is what moves it.
+     */
+    private fun layoutSubtitles() {
+        val pv = view ?: return
+        val plan = DualSubs.plan(subState())
+        subPlan = plan
+        val panelWidth = if (syncPanel != null) panel?.widthPx ?: 0 else 0
+        val panelOnLeft = activity.uiDirection() == View.LAYOUT_DIRECTION_RTL
+        val edge = insetSide + activity.dp(8)
+        val gutter = activity.dp(6)
+        fun place(sv: SubtitleView?, slot: DualSubs.Slot) {
+            if (sv == null) return
+            // An embedded track's view has the picture's own frame, which can be narrower (or,
+            // zoomed, wider) than the screen: its side is already that far from the screen's.
+            val inset = (pv.width - sv.width) / 2
+            val pad = DualSubs.pad(slot, sv.width, (edge - inset).coerceAtLeast(0), gutter, panelWidth, panelOnLeft)
+            sv.setPadding(pad.left, 0, pad.right, 0)
+            val visibility = if (slot == DualSubs.Slot.HIDDEN) View.INVISIBLE else View.VISIBLE
+            if (sv.visibility != visibility) sv.visibility = visibility
+        }
+        place(extView, plan.first)
+        // Only an addon subtitle is ever synced: the embedded track's view has no part beside
+        // the panel.
+        place(pv.subtitleView, if (plan.first == DualSubs.Slot.BESIDE_PANEL) DualSubs.Slot.FULL else plan.first)
+        place(extView2, plan.second)
+        placeSecond()
+    }
+
+    private fun boxWidth(v: View?) = if (v == null) 0 else v.width - v.paddingLeft - v.paddingRight
+    private fun boxHeight(v: View?) = if (v == null) 0 else v.height - v.paddingTop - v.paddingBottom
+
+    private val screenXY = IntArray(2)
+    private fun boxBottomOnScreen(v: View): Int {
+        v.getLocationOnScreen(screenXY)
+        return screenXY[1] + v.height - v.paddingBottom
+    }
+
+    /**
+     * The second subtitle's distance from the bottom: its own setting, or (stacked) right above
+     * what the first is showing at the moment. This runs on every new line of either while they
+     * are stacked, and only then measures anything.
+     */
+    private fun placeSecond() {
+        val v2 = extView2 ?: return
+        val plan = subPlan ?: return
+        var want = subStyle2.bottom
+        if (plan.secondBottom != DualSubs.Bottom.OWN) {
+            want = subStyle.bottom
+            val v1 = if (activeExtId != null) extView else view?.subtitleView
+            val w1 = boxWidth(v1)
+            val h1 = boxHeight(v1)
+            val w2 = boxWidth(v2)
+            val h2 = boxHeight(v2)
+            if (v1 != null && w1 > 0 && h1 > 0 && w2 > 0 && h2 > 0) {
+                // An embedded track is drawn inside the picture's own frame, which can end
+                // higher than the screen does: how much, so both are counted from one bottom.
+                val shift = if (v1 === extView) 0 else boxBottomOnScreen(v2) - boxBottomOnScreen(v1)
+                val line = (h1 * subStyle.bottom).toInt() + shift
+                var low = line
+                var high = line
+                var secondText = 0
+                if (plan.secondBottom == DualSubs.Bottom.ABOVE_FIRST) {
+                    val cues = if (activeExtId != null) ext?.showing else player?.currentCues?.cues
+                    subMeasure.extent(cues, subStyle, w1, h1)?.let {
+                        low = it.low + shift
+                        high = it.high + shift
+                        secondText = subMeasure.tallest(ext2?.showing, subStyle2, w2, h2)
+                    }
+                }
+                val lift = DualSubs.stackedLift(low, high, secondText, h2, gap = h2 / 100)
+                // Half a pixel more: the painter turns this back into whole pixels, rounding down.
+                want = ((lift + 0.5f) / h2).coerceIn(0f, 1f)
+            }
+        }
+        if (want != secondBottom) {
+            secondBottom = want
+            v2.setBottomPaddingFraction(want)
+        }
+    }
+
     private fun addToCatalog(arr: JSONArray?) {
         if (arr == null || arr.length() == 0 || source?.optBoolean("isLive") == true) return
         var added = 0
@@ -1755,62 +2218,71 @@ class NativePlayer(
         if (added == 0) return
         tryRestoreSub()
         maybeAutoSelectSub()
+        tryRestoreSecond()
         if (panel?.isOpen == true && panelKind == "subs") refreshPanel()
     }
 
     private fun applySubStyle() {
         subStyle.applyTo(view?.subtitleView)
         subStyle.applyTo(extView)
+        subStyle2.applyTo(extView2)
+        secondBottom = subStyle2.bottom
+        // A new size or position moves two subtitles relative to each other.
+        layoutSubtitles()
     }
 
-    /** The delay the "look and timing" tab shows: a synced subtitle's is its sync's nudge. */
-    private fun subDelayMs(): Long {
-        val e = ext ?: return 0
+    /** The delay the "look and timing" tab shows: a synced subtitle's is its sync's nudge. Each
+     *  of two subtitles has its own. */
+    private fun subDelayMs(second: Boolean): Long {
+        val e = (if (second) ext2 else ext) ?: return 0
         return e.sync?.let { Math.round(it.nudge * 1000) } ?: e.delayMs
     }
 
-    private fun setSubDelay(ms: Long) {
-        if (activeExtId == null) {
+    private fun setSubDelay(ms: Long, second: Boolean) {
+        if (!second && activeExtId == null) {
             toast(Strings.delayAddonOnly)
             return
         }
         val delay = ms.coerceIn(-600_000, 600_000)
         // A subtitle with a sync state is timed by it alone, so its delay is edited there: the
         // plain delay on top would move it twice.
-        val sync = ext?.sync
-        if (sync != null) applySync(TextSync.withNudge(sync, delay / 1000.0)) else ext?.delayMs = delay
+        val e = if (second) ext2 else ext
+        val sync = e?.sync
+        if (sync != null) applySync(TextSync.withNudge(sync, delay / 1000.0), second) else e?.delayMs = delay
     }
 
     // ---- subtitle sync ---------------------------------------------------------------------
 
-    /** The addon (or saved) subtitle that is showing. */
-    private fun activeSub(): CatalogSub? {
-        val id = activeExtId ?: return null
-        return saved.firstOrNull { it.id == id } ?: catalog.firstOrNull { it.id == id }
-    }
+    /** The addon (or saved) subtitle that is showing (as the first, when there are two). */
+    private fun activeSub(): CatalogSub? = subById(activeExtId)
+
+    /** The first or the second subtitle, as an addon (or saved) one; without [second], the one
+     *  the open sync panel is for. */
+    private fun syncedSub(second: Boolean = syncSecond): CatalogSub? = if (second) secondSub() else activeSub()
 
     /** Only a subtitle drawn by this player's own renderer has a list of lines to sync. */
-    private fun canSync() = activeSub() != null && ext?.active == true
+    private fun canSync(second: Boolean) = syncedSub(second) != null && (if (second) ext2 else ext)?.active == true
 
-    /** A new sync state for the subtitle that is showing: drawn at once, and kept on the device
-     *  under the subtitle's address (for a saved one, the address it was saved from). */
-    private fun applySync(state: TextSync.State) {
-        val sub = activeSub() ?: return
-        ext?.setSync(state)
+    /** A new sync state for a subtitle that is showing: drawn at once, and kept on the device
+     *  under the subtitle's address (for a saved one, the address it was saved from). Two
+     *  subtitles have two addresses, so each keeps its own. */
+    private fun applySync(state: TextSync.State, second: Boolean) {
+        val sub = syncedSub(second) ?: return
+        (if (second) ext2 else ext)?.setSync(state)
         syncStore.put(sub.src, state)
     }
 
     /**
-     * Opens the sync panel for the subtitle that is showing. From here on that subtitle is timed
+     * Opens the sync panel for a subtitle that is showing. From here on that subtitle is timed
      * by its sync state alone: the plain delay it had so far becomes the state's nudge, and the
      * plain delay goes back to zero.
      */
-    private fun openSync() {
-        val e = ext ?: return
-        val sub = activeSub() ?: return
+    private fun openSync(second: Boolean) {
+        val e = (if (second) ext2 else ext) ?: return
+        val sub = syncedSub(second) ?: return
         if (!e.active) return
         if (e.sync == null) {
-            applySync(TextSync.withNudge(TextSync.State(), e.delayMs / 1000.0))
+            applySync(TextSync.withNudge(TextSync.State(), e.delayMs / 1000.0), second)
             e.delayMs = 0
         }
         // The video is watched and listened to beside this panel: no dimming, and a tap on the
@@ -1820,18 +2292,20 @@ class NativePlayer(
         // the panel and out of reach.
         view?.controllerAutoShow = false
         syncPanelFor = sub.src
+        syncSecond = second
         syncPanel = SyncPanel(activity, p, e, syncHost).also { it.build() }
         // The subtitle itself moves into the part of the picture the panel leaves free, so the
-        // result of an alignment can be read on the video.
-        val rtl = activity.uiDirection() == View.LAYOUT_DIRECTION_RTL
-        extView?.setPadding(if (rtl) p.widthPx else 0, 0, if (rtl) 0 else p.widthPx, 0)
+        // result of an alignment can be read on the video. Of two, only the one being synced
+        // shows meanwhile.
+        layoutSubtitles()
     }
 
     private fun closeSync() {
         syncPanel?.close()
         syncPanel = null
         syncPanelFor = null
-        extView?.setPadding(0, 0, 0, 0)
+        // Back to the whole width, and to both subtitles when there are two.
+        layoutSubtitles()
         view?.let { v ->
             v.controllerAutoShow = true
             // Left paused: the controls it would have shown come up now.
@@ -1854,7 +2328,7 @@ class NativePlayer(
         }
         override fun setSync(state: TextSync.State) {
             // Not after the subtitle the panel lists has gone.
-            if (activeSub()?.src == syncPanelFor) applySync(state)
+            if (syncedSub()?.src == syncPanelFor) applySync(state, syncSecond)
         }
         override fun close() {
             panel?.dismiss()
@@ -2081,6 +2555,7 @@ class NativePlayer(
         source = null
         pickingStream = null
         ext?.clear()
+        ext2?.clear()
         // The sleep timer ends with the player. (The skip segments stay: the page clears them when
         // it leaves the player, and play() does for another title.)
         handler.removeCallbacks(sleepFire)
