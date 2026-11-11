@@ -95,13 +95,18 @@ class SubtitleControls(
     private val onStyle: () -> Unit,
     private val getDelayMs: () -> Long,
     private val onDelay: (Long) -> Unit,
+    /** Opens the sync panel (lining the subtitle up with the sound by ear). */
+    private val onSync: (() -> Unit)? = null,
 ) {
     private lateinit var panel: SidePanel
     private var delayWorks = true
+    private var synced = false
 
-    fun build(p: SidePanel, delayWorks: Boolean) {
+    /** [synced]: the subtitle has been synced by ear, and the delay here is that sync's nudge. */
+    fun build(p: SidePanel, delayWorks: Boolean, synced: Boolean = false) {
         panel = p
         this.delayWorks = delayWorks
+        this.synced = synced
         render()
     }
 
@@ -165,7 +170,10 @@ class SubtitleControls(
                 Triple("+0.1", false) { onDelay(getDelayMs() + 100); render() },
                 Triple("+1", false) { onDelay(getDelayMs() + 1000); render() },
             ))
-            p.note(Strings.delayHint)
+            p.note(if (synced) Strings.delayHint + "\n" + Strings.delayOnSyncedSubtitle else Strings.delayHint)
+            // For a subtitle that one delay can't fix (it starts right and drifts, or the delay
+            // is hard to find by trial and error).
+            onSync?.let { open -> p.action(Strings.syncOpen, R.drawable.ic_audio_lines) { open() } }
         }
 
         p.action(Strings.resetLook) {

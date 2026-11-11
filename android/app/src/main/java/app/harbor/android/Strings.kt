@@ -180,6 +180,64 @@ object Strings {
     )
     val delayHint get() = t("Positive = the subtitle comes later, negative = earlier.", "موجب = الترجمة تتأخر، سالب = تطلع أبكر.")
     val resetLook get() = t("Reset the look", "رجّع المظهر الافتراضي")
+    /** Under the delay of a subtitle that has been synced: the delay is the sync's own nudge. */
+    val delayOnSyncedSubtitle get() = t(
+        "This subtitle is synced. The delay here is a fine adjustment on top of the sync.",
+        "هذه الترجمة مضبوطة بالمزامنة. التأخير هنا تعديل دقيق فوق المزامنة.",
+    )
+
+    // ---- player: subtitle sync (aligning an addon subtitle to the sound by ear) ----
+    val sync get() = t("Sync", "مزامنة")
+    val syncSubtitle get() = t("Sync subtitle", "مزامنة الترجمة")
+    val syncNeedsAddonSubtitle get() = t(
+        "Syncing works on addon subtitles. Pick a subtitle from the addons first.",
+        "المزامنة تشتغل على ترجمات الإضافات. اختر ترجمة من الإضافات أول.",
+    )
+    val syncNotForEmbedded get() = t(
+        "The lines of a subtitle that is part of the video file can't be listed, so it can't be synced here. Pick a subtitle from the addons instead.",
+        "سطور الترجمة المدمجة في ملف الفيديو ما تنعرض في قائمة، فما تنضبط من هنا. اختر ترجمة من الإضافات بدالها.",
+    )
+    val syncOpen get() = t("Sync the subtitle to the sound", "مزامنة الترجمة مع الصوت")
+    val alignToNow get() = t("Align to now", "حاذِ مع الآن")
+    val jumpHere get() = t("Jump here", "انتقل إلى هنا")
+    val syncReset get() = t("Reset", "إعادة ضبط")
+    val done get() = t("Done", "تم")
+    /** Back to the line being spoken, and keep following it. */
+    val syncNow get() = t("Now", "الآن")
+    /** [seconds] comes ready-made, e.g. "+0.5". */
+    fun syncOffset(seconds: String) = t("${seconds}s", "$seconds ث")
+    fun syncAnchors(set: Int) = t("Anchors: $set of 2", "نقاط الضبط: $set من 2")
+    val syncHintFirst get() = t(
+        "When you hear a line, tap it in the list, then “Align to now”.",
+        "لما تسمع جملة، اضغط سطرها في القائمة ثم «حاذِ مع الآن».",
+    )
+    val syncHintSecond get() = t(
+        "If it drifts again later in the film, jump to a line far from the first and align that one too.",
+        "إذا رجعت الترجمة تنحرف بعدين، انتقل إلى سطر بعيد عن الأول وحاذِه أيضاً.",
+    )
+    val syncHintBoth get() = t(
+        "Both anchors are set. Aligning another line replaces the second one.",
+        "انضبطت النقطتان. محاذاة سطر آخر تأخذ مكان الثانية.",
+    )
+    val syncTooClose get() = t(
+        "The two anchors are too close together, so only the last one counts. Pick the second far from the first.",
+        "النقطتان قريبتان من بعض، فانحسبت الأخيرة فقط. اختر الثانية بعيدة عن الأولى.",
+    )
+    val syncTooSteep get() = t(
+        "The two anchors disagree too much, so only the last one counts. One of them may be on the wrong line.",
+        "النقطتان ما تتفقان، فانحسبت الأخيرة فقط. يمكن واحدة منهما على سطر غلط.",
+    )
+    /** A run of lines that is off by itself (another cut of the film): marked, then aligned. */
+    val syncSection get() = t("Fix one section", "تصحيح مقطع واحد")
+    fun syncSections(n: Int) = t("Sections: $n", "المقاطع: $n")
+    val sectionPickFirst get() = t("Only one part is off? Tap its first line.", "جزء واحد فقط غلط؟ اضغط أول سطر فيه.")
+    val sectionPickLast get() = t("Now tap its last line.", "والآن اضغط آخر سطر فيه.")
+    val sectionAlignInside get() = t(
+        "Open the line you hear inside the marked part and tap “Align to now”. Only that part moves.",
+        "افتح السطر اللي تسمعه داخل الجزء المحدد واضغط «حاذِ مع الآن». هذا الجزء فقط يتحرك.",
+    )
+    val syncSearch get() = t("Search the lines", "ابحث في السطور")
+    val syncNoMatches get() = t("No line has these words.", "ما فيه سطر بهذه الكلمات.")
 
     // ---- player: audio and speed ----
     val mono get() = t("Mono", "أحادي")

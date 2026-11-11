@@ -79,21 +79,34 @@ fun Context.iconButton(res: Int, desc: String, onClick: () -> Unit) = FrameLayou
 /**
  * Right-hand sheet over the player (landscape), like streaming apps: dimmed scrim,
  * header with title + close, scrollable body. Tapping the scrim closes it.
+ *
+ * A panel the video is watched beside (subtitle sync) leaves the picture as it is ([dim] off)
+ * and can give a tap outside it another job ([onOutsideTap]).
  */
-class SidePanel(private val ctx: Context, private val host: FrameLayout, title: String, private val onClosed: () -> Unit = {}) {
+class SidePanel(
+    private val ctx: Context,
+    private val host: FrameLayout,
+    title: String,
+    dim: Boolean = true,
+    private val onOutsideTap: (() -> Unit)? = null,
+    private val onClosed: () -> Unit = {},
+) {
     private val scrim = FrameLayout(ctx)
     private val panel = LinearLayout(ctx)
     val body = LinearLayout(ctx)
     val header = LinearLayout(ctx)
     private val titleView = ctx.label(title, 17f, bold = true, lines = 1)
     private val scroll = ScrollView(ctx)
+    private var filling: View? = null
+    /** How much of the screen's width the panel covers, on its side (the end side). */
+    val widthPx: Int
     var isOpen = false
         private set
 
     init {
-        scrim.setBackgroundColor(Color.argb(110, 0, 0, 0))
+        scrim.setBackgroundColor(if (dim) Color.argb(110, 0, 0, 0) else Color.TRANSPARENT)
         scrim.isClickable = true
-        scrim.setOnClickListener { dismiss() }
+        scrim.setOnClickListener { if (onOutsideTap != null) onOutsideTap.invoke() else dismiss() }
 
         val metrics = ctx.resources.displayMetrics
         // Right-to-left (Arabic): the panel sits at the left edge, so round the other corners and
@@ -102,6 +115,7 @@ class SidePanel(private val ctx: Context, private val host: FrameLayout, title: 
         val rtl = ctx.uiDirection() == View.LAYOUT_DIRECTION_RTL
         val r = ctx.dp(22).toFloat()
         val width = minOf(ctx.dp(460), (metrics.widthPixels * 0.62f).toInt()).coerceAtLeast(minOf(ctx.dp(320), metrics.widthPixels))
+        widthPx = width
         panel.orientation = LinearLayout.VERTICAL
         panel.isClickable = true // don't let taps fall through to the scrim
         panel.background = GradientDrawable().apply {
@@ -143,7 +157,25 @@ class SidePanel(private val ctx: Context, private val host: FrameLayout, title: 
         onClosed()
     }
 
-    fun clear() = body.removeAllViews()
+    fun clear() {
+        body.removeAllViews()
+        val list = filling ?: return
+        filling = null
+        panel.removeView(list)
+        scroll.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = ctx.dp(6) }
+    }
+
+    /**
+     * Gives the panel's height under the body to [v], a long list that scrolls by itself: inside
+     * the body's own ScrollView every one of its rows would be laid out at once. The body then
+     * takes only the height of what is in it.
+     */
+    fun fill(v: View) {
+        filling?.let { panel.removeView(it) }
+        filling = v
+        scroll.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = ctx.dp(6) }
+        panel.addView(v, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+    }
 
     fun scrollToTop() = scroll.scrollTo(0, 0)
 

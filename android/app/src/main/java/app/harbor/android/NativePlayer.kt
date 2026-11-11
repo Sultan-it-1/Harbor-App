@@ -71,7 +71,8 @@ import java.util.concurrent.Executors
  * swipes, pinch, hold for double speed), a top bar (title, streams, subtitles, audio, aspect,
  * lock), a next-episode button, a skip button for intros, recaps and credits, and side panels for
  * streams (with "open in another player"), subtitles (embedded + addon, grouped by language, own
- * renderer with instant delay) and audio/speed (with the sleep timer).
+ * renderer with instant delay, and a sync panel that lines an addon subtitle up with the sound by
+ * ear) and audio/speed (with the sleep timer).
  *
  * Subtitles saved with a download are listed on their own and are all that shows offline;
  * online, every addon subtitle shows too, each with a button that saves it with the download.
@@ -159,6 +160,12 @@ class NativePlayer(
      *  its id while it loads. */
     private var restoreUrl: String? = null
     private var restoringId: String? = null
+    /** The sync the viewer gave an addon subtitle by ear (TextSync), kept on the device by the
+     *  subtitle's address and put back whenever that subtitle is shown again. */
+    private val syncStore = SyncStore(activity)
+    private var syncPanel: SyncPanel? = null
+    /** The address of the subtitle the open sync panel lists. */
+    private var syncPanelFor: String? = null
 
     // ---- skip intro / recap / credits ------------------------------------------------------
     private var segments: List<SkipSegment> = emptyList()
@@ -238,6 +245,8 @@ class NativePlayer(
             subStore.clear()
             activeExtId = null; subsOff = false; userPickedSub = false; autoSubDone = false
             restoreUrl = null; restoringId = null
+            // The sync panel lists the lines of the subtitle that is about to go.
+            if (panelKind == "sync") panel?.dismiss()
             ext?.delayMs = 0
             ext?.clear()
             // Skip segments belong to a title too, unless the page already sent this one's.
@@ -274,7 +283,7 @@ class NativePlayer(
         start(src, src.optLong("startMs", 0))
         // The same title opened again after the player was closed: closing emptied the subtitle
         // view, so the subtitle that is still marked as chosen goes back on.
-        activeExtId?.let { id -> if (ext?.active == false) parsed[id]?.let { ext?.set(it) } }
+        activeExtId?.let { id -> if (ext?.active == false) parsed[id]?.let { ext?.set(it, activeSub()?.let { s -> syncStore.get(s.src) }) } }
         addToCatalog(src.optJSONArray("subtitles"))
         tryRestoreSub()
     }
@@ -1169,9 +1178,16 @@ class NativePlayer(
     // Panels
     // =========================================================================================
 
-    private fun openPanel(kind: String, titleText: String): SidePanel {
+    private fun openPanel(
+        kind: String,
+        titleText: String,
+        dim: Boolean = true,
+        onOutsideTap: (() -> Unit)? = null,
+        onClose: (() -> Unit)? = null,
+    ): SidePanel {
         panel?.dismiss()
-        val p = SidePanel(activity, root, titleText) {
+        val p = SidePanel(activity, root, titleText, dim, onOutsideTap) {
+            onClose?.invoke()
             if (panel?.isOpen != true) {
                 panelKind = ""
                 updateChrome()
@@ -1190,6 +1206,8 @@ class NativePlayer(
             "streams" -> renderStreams()
             "subs" -> renderSubs(subsTab)
             "audio" -> renderAudio()
+            // Another subtitle (or none) took over: the lines listed are no longer the ones drawn.
+            "sync" -> if (activeSub()?.src != syncPanelFor) panel?.dismiss()
         }
     }
 
@@ -1319,10 +1337,27 @@ class NativePlayer(
         p.chips(listOf(
             Triple(Strings.subtitlesTab, tab == "tracks") { renderSubs("tracks") },
             Triple(Strings.lookAndTiming, tab == "style") { renderSubs("style") },
+            // Straight to the list of lines when there is a subtitle to sync; a tab that says why
+            // not otherwise.
+            Triple(Strings.sync, tab == "sync") { if (canSync()) openSync() else renderSubs("sync") },
         ))
         if (tab == "style") {
-            SubtitleControls(activity, subStyle, onStyle = { applySubStyle() }, getDelayMs = { ext?.delayMs ?: 0 }, onDelay = { setSubDelay(it) })
-                .build(p, delayWorks = activeExtId != null)
+            SubtitleControls(
+                activity, subStyle,
+                onStyle = { applySubStyle() },
+                getDelayMs = { subDelayMs() },
+                onDelay = { setSubDelay(it) },
+                onSync = { openSync() },
+            ).build(p, delayWorks = activeExtId != null, synced = ext?.sync?.let { it.points.isNotEmpty() || it.segments.isNotEmpty() } == true)
+            return
+        }
+        if (tab == "sync") {
+            when {
+                canSync() -> p.action(Strings.syncOpen, R.drawable.ic_audio_lines) { openSync() }
+                // Its lines are decoded as the video plays: there is no list of them to pick from.
+                player?.let { selectedEmbedded(it) } != null -> p.note(Strings.syncNotForEmbedded)
+                else -> p.note(Strings.syncNeedsAddonSubtitle)
+            }
             return
         }
         val pl = player
@@ -1581,7 +1616,8 @@ class NativePlayer(
             }
             activeExtId = s.id
             subsOff = false
-            ext?.set(cues)
+            // With the sync the viewer gave this subtitle before, if any.
+            ext?.set(cues, syncStore.get(s.src))
             player?.let { applyTextSelection(it) }
             refreshPanel()
             return
@@ -1685,12 +1721,106 @@ class NativePlayer(
         subStyle.applyTo(extView)
     }
 
+    /** The delay the "look and timing" tab shows: a synced subtitle's is its sync's nudge. */
+    private fun subDelayMs(): Long {
+        val e = ext ?: return 0
+        return e.sync?.let { Math.round(it.nudge * 1000) } ?: e.delayMs
+    }
+
     private fun setSubDelay(ms: Long) {
         if (activeExtId == null) {
             toast(Strings.delayAddonOnly)
             return
         }
-        ext?.delayMs = ms.coerceIn(-600_000, 600_000)
+        val delay = ms.coerceIn(-600_000, 600_000)
+        // A subtitle with a sync state is timed by it alone, so its delay is edited there: the
+        // plain delay on top would move it twice.
+        val sync = ext?.sync
+        if (sync != null) applySync(TextSync.withNudge(sync, delay / 1000.0)) else ext?.delayMs = delay
+    }
+
+    // ---- subtitle sync ---------------------------------------------------------------------
+
+    /** The addon (or saved) subtitle that is showing. */
+    private fun activeSub(): CatalogSub? {
+        val id = activeExtId ?: return null
+        return saved.firstOrNull { it.id == id } ?: catalog.firstOrNull { it.id == id }
+    }
+
+    /** Only a subtitle drawn by this player's own renderer has a list of lines to sync. */
+    private fun canSync() = activeSub() != null && ext?.active == true
+
+    /** A new sync state for the subtitle that is showing: drawn at once, and kept on the device
+     *  under the subtitle's address (for a saved one, the address it was saved from). */
+    private fun applySync(state: TextSync.State) {
+        val sub = activeSub() ?: return
+        ext?.setSync(state)
+        syncStore.put(sub.src, state)
+    }
+
+    /**
+     * Opens the sync panel for the subtitle that is showing. From here on that subtitle is timed
+     * by its sync state alone: the plain delay it had so far becomes the state's nudge, and the
+     * plain delay goes back to zero.
+     */
+    private fun openSync() {
+        val e = ext ?: return
+        val sub = activeSub() ?: return
+        if (!e.active) return
+        if (e.sync == null) {
+            applySync(TextSync.withNudge(TextSync.State(), e.delayMs / 1000.0))
+            e.delayMs = 0
+        }
+        // The video is watched and listened to beside this panel: no dimming, and a tap on the
+        // picture pauses or plays instead of closing it.
+        val p = openPanel("sync", Strings.syncSubtitle, dim = false, onOutsideTap = { togglePlay() }, onClose = { closeSync() })
+        // Pausing to look for a line would bring the playback controls up by themselves, under
+        // the panel and out of reach.
+        view?.controllerAutoShow = false
+        syncPanelFor = sub.src
+        syncPanel = SyncPanel(activity, p, e, syncHost).also { it.build() }
+        // The subtitle itself moves into the part of the picture the panel leaves free, so the
+        // result of an alignment can be read on the video.
+        val rtl = activity.uiDirection() == View.LAYOUT_DIRECTION_RTL
+        extView?.setPadding(if (rtl) p.widthPx else 0, 0, if (rtl) 0 else p.widthPx, 0)
+    }
+
+    private fun closeSync() {
+        syncPanel?.close()
+        syncPanel = null
+        syncPanelFor = null
+        extView?.setPadding(0, 0, 0, 0)
+        view?.let { v ->
+            v.controllerAutoShow = true
+            // Left paused: the controls it would have shown come up now.
+            if (isShowing && player?.playWhenReady == false) v.showController()
+        }
+    }
+
+    private fun togglePlay() {
+        val p = player ?: return
+        if (p.playWhenReady) p.pause() else p.play()
+    }
+
+    private val syncHost = object : SyncPanel.Host {
+        override fun positionMs(): Long? = player?.currentPosition
+        override fun isPlaying(): Boolean = player?.playWhenReady == true
+        override fun togglePlay() = this@NativePlayer.togglePlay()
+        override fun seekTo(ms: Long) {
+            val p = player ?: return
+            p.seekTo(ms.coerceIn(0, durationOrMax(p)))
+        }
+        override fun setSync(state: TextSync.State) {
+            // Not after the subtitle the panel lists has gone.
+            if (activeSub()?.src == syncPanelFor) applySync(state)
+        }
+        override fun close() {
+            panel?.dismiss()
+        }
+        override fun keyboardClosed() {
+            // The keyboard can bring the system bars back over the video.
+            if (isShowing) activity.setFullscreenMode(true)
+        }
     }
 
     // ---- audio + speed ---------------------------------------------------------------------
