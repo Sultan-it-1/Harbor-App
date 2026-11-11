@@ -57,7 +57,10 @@ export function saveResumeBatch(
     if (typeof e.season === "number" && typeof e.episode === "number") {
       if (e.season < 0 || e.episode < 1) continue;
     }
-    all[entryKey(e.id, e.season, e.episode)] = { ms: e.ms, t: e.t ?? now };
+    const key = entryKey(e.id, e.season, e.episode);
+    // A position synced from an account doesn't know the length the player measured: keep it.
+    const d = all[key]?.d;
+    all[key] = d ? { ms: e.ms, t: e.t ?? now, d } : { ms: e.ms, t: e.t ?? now };
   }
   writeAll(all);
 }
