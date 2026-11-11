@@ -151,6 +151,31 @@ object Strings {
     fun subtitlesFound(n: Int) = t(if (n == 1) "Found 1 subtitle" else "Found $n subtitles", "لقيت $n ترجمة")
     val delayAddonOnly get() = t("Delay works on addon subtitles", "التأخير يشتغل على ترجمات الإضافات")
 
+    // ---- player: a second subtitle, shown together with the first ----
+    val secondSubtitleTab get() = t("Second subtitle", "الترجمة الثانية")
+    val noSecondSubtitle get() = t("No second subtitle", "بدون ترجمة ثانية")
+    val secondFromAddonsNote get() = t(
+        "A second subtitle shows together with the first. It comes from the addons or the ones saved on this device; a subtitle that is part of the video file can only be the first.",
+        "الترجمة الثانية تظهر مع الأولى. تجي من الإضافات أو من المحفوظة على الجهاز؛ الترجمة المدمجة في ملف الفيديو تكون الأولى فقط.",
+    )
+    val secondNeedsFirst get() = t(
+        "Pick the first subtitle in the “Subtitles” tab, then add a second one here.",
+        "اختر الترجمة الأولى من تبويب «الترجمات» أول، وبعدها أضف الثانية من هنا.",
+    )
+    val dualLayout get() = t("Layout", "الترتيب")
+    val sideBySide get() = t("Side by side", "جنب بعض")
+    val stacked get() = t("Stacked", "فوق بعض")
+    val swapSides get() = t("Swap sides", "بدّل الجهتين")
+    /** Why "side by side" isn't what is on screen. */
+    val stackedWhileUpright get() = t(
+        "Side by side needs a wide picture. While the phone is upright, the two are stacked.",
+        "جنب بعض يحتاج صورة عريضة. والجوال بالطول، تظهر الترجمتان فوق بعض.",
+    )
+    val stackedForPictureSubtitle get() = t(
+        "The first subtitle here is made of pictures, not text, and can't be fitted into half the width. The two are stacked.",
+        "الترجمة الأولى هنا صور وليست نصاً، وما تنحط في نصف العرض. فتظهر الترجمتان فوق بعض.",
+    )
+
     // ---- player: subtitle look and timing ----
     fun size(percent: Int) = t("Size · $percent%", "الحجم · $percent%")
     val smaller get() = t("Smaller −", "أصغر −")
@@ -170,6 +195,14 @@ object Strings {
     val lower get() = t("Lower ↓", "أنزل ↓")
     val higher get() = t("Higher ↑", "أرفع ↑")
     val defaultValue get() = t("Default", "الافتراضي")
+    val top get() = t("Top", "أعلى الصورة")
+    /** Which of two subtitles the look and the delay below are for. */
+    val firstSubtitle get() = t("First", "الأولى")
+    val secondSubtitle get() = t("Second", "الثانية")
+    val secondPositionAuto get() = t(
+        "Stacked, the second subtitle sits right above the first one and moves with it.",
+        "في ترتيب «فوق بعض» تكون الترجمة الثانية فوق الأولى مباشرة وتتحرك معها.",
+    )
     val font get() = t("Font", "الخط")
     val bold get() = t("Bold", "عريض")
     /** [seconds] comes ready-made, e.g. "+0.5". */
@@ -198,6 +231,13 @@ object Strings {
         "سطور الترجمة المدمجة في ملف الفيديو ما تنعرض في قائمة، فما تنضبط من هنا. اختر ترجمة من الإضافات بدالها.",
     )
     val syncOpen get() = t("Sync the subtitle to the sound", "مزامنة الترجمة مع الصوت")
+    /** Two subtitles that can both be synced: which one. */
+    val syncWhich get() = t(
+        "Each subtitle has its own sync. Choose the one to line up with the sound; the other is hidden meanwhile.",
+        "لكل ترجمة مزامنتها. اختر اللي تضبطها مع الصوت، والثانية تختفي مؤقتاً.",
+    )
+    val syncFirstSubtitle get() = t("Sync the first subtitle", "مزامنة الترجمة الأولى")
+    val syncSecondSubtitle get() = t("Sync the second subtitle", "مزامنة الترجمة الثانية")
     val alignToNow get() = t("Align to now", "حاذِ مع الآن")
     val jumpHere get() = t("Jump here", "انتقل إلى هنا")
     val syncReset get() = t("Reset", "إعادة ضبط")

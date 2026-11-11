@@ -97,7 +97,14 @@ object CueTiming {
  * is timed by it alone, its nudge being its delay; the plain delay is for the ones that have none.
  */
 @OptIn(UnstableApi::class)
-class ExternalSubs(private val view: SubtitleView, private val positionMs: () -> Long?) {
+class ExternalSubs(
+    private val view: SubtitleView,
+    /** Lines the file itself puts at the bottom follow the view's own distance from the bottom
+     *  instead (see [atViewBottom]). For the second of two subtitles, which is moved clear of the
+     *  first that way. */
+    private val ownBottom: Boolean = false,
+    private val positionMs: () -> Long?,
+) {
     private var cues: List<List<Cue>> = emptyList()
     /** The cue times as the subtitle's file has them (µs, sorted by start). Never changed: a sync
      *  is always worked out from these. */
@@ -107,6 +114,12 @@ class ExternalSubs(private val view: SubtitleView, private val positionMs: () ->
     private var drawn = CueTiming.retime(fileStarts, fileEnds, null)
     /** The cues on screen, by their place in the file. */
     private var shown = IntArray(0)
+    /** The cues on screen, as they were handed to the view. */
+    var showing: List<Cue> = emptyList()
+        private set
+    /** Called whenever what is on screen has changed (another line, or none). The second of two
+     *  stacked subtitles is placed by the height of the first one's line. */
+    var onShown: (() -> Unit)? = null
     private val handler = Handler(Looper.getMainLooper())
     var delayMs = 0L
         set(v) { field = v; tick() }
@@ -125,15 +138,17 @@ class ExternalSubs(private val view: SubtitleView, private val positionMs: () ->
     fun set(entries: List<CuesWithTiming>?, sync: TextSync.State? = null) {
         handler.removeCallbacks(ticker)
         shown = IntArray(0)
+        showing = emptyList()
         view.setCues(emptyList())
         if (entries.isNullOrEmpty()) {
             cues = emptyList(); fileStarts = LongArray(0); fileEnds = LongArray(0)
             this.sync = null
             drawn = CueTiming.retime(fileStarts, fileEnds, null)
+            onShown?.invoke()
             return
         }
         val sorted = entries.sortedBy { it.startTimeUs }
-        cues = sorted.map { it.cues }
+        cues = if (ownBottom) sorted.map { e -> e.cues.map { atViewBottom(it) } } else sorted.map { it.cues }
         fileStarts = LongArray(sorted.size) { sorted[it].startTimeUs }
         fileEnds = LongArray(sorted.size) {
             val e = sorted[it]
@@ -141,6 +156,7 @@ class ExternalSubs(private val view: SubtitleView, private val positionMs: () ->
         }
         this.sync = sync
         drawn = CueTiming.retime(fileStarts, fileEnds, sync)
+        onShown?.invoke()
         handler.post(ticker)
     }
 
@@ -173,7 +189,10 @@ class ExternalSubs(private val view: SubtitleView, private val positionMs: () ->
         val now = if (d.order == null) at else IntArray(at.size) { d.order[at[it]] }
         if (now.contentEquals(shown)) return
         shown = now
-        view.setCues(now.flatMap { cues[it] })
+        val list = now.flatMap { cues[it] }
+        showing = list
+        view.setCues(list)
+        onShown?.invoke()
     }
 
     // ---- the sync panel's list of lines (a cue is named by its place in the file) ----
@@ -200,6 +219,18 @@ class ExternalSubs(private val view: SubtitleView, private val positionMs: () ->
     }
 
     companion object {
+        /**
+         * A line the file itself puts at the bottom (an ASS file does that for every line, SubRip
+         * for {\an2}) is drawn at that place whatever the view's distance from the bottom is. Without
+         * that position it follows the view's, like a line that has none. Lines placed anywhere
+         * else (signs at the top) keep their place.
+         */
+        private fun atViewBottom(cue: Cue): Cue {
+            val atBottom = cue.bitmap == null && cue.lineType == Cue.LINE_TYPE_FRACTION &&
+                cue.lineAnchor == Cue.ANCHOR_TYPE_END && cue.line >= 0.9f
+            return if (atBottom) cue.buildUpon().setLine(Cue.DIMEN_UNSET, Cue.TYPE_UNSET).setLineAnchor(Cue.TYPE_UNSET).build() else cue
+        }
+
         /** Parses a normalised (UTF-8) subtitle file with Media3's own parsers. */
         fun parse(sub: SubtitleStore.LocalSub): List<CuesWithTiming> {
             val bytes = sub.file.readBytes()

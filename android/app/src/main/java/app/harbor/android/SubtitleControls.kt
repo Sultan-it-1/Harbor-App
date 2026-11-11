@@ -9,7 +9,10 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
 import org.json.JSONObject
 
-/** Subtitle look, saved on the device. First run is seeded from Harbor's subtitle settings. */
+/**
+ * Subtitle look, saved on the device. First run is seeded from Harbor's subtitle settings.
+ * The second of two subtitles has a look of its own, saved apart ([PREFS_SECOND]).
+ */
 data class SubStyle(
     var scale: Float = 1f,
     var background: String = "shadow", // shadow | outline | box | none
@@ -19,10 +22,22 @@ data class SubStyle(
     var boxOpacity: Float = 0.6f,
 ) {
     companion object {
-        private const val PREFS = "harbor.substyle"
+        /** Where the look of the first (or only) subtitle is kept, and of the second one. */
+        const val PREFS = "harbor.substyle"
+        const val PREFS_SECOND = "harbor.substyle2"
 
-        fun load(ctx: Context): SubStyle? {
-            val p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        /** The highest a subtitle's line can be set, as a part of the picture's height from the
+         *  bottom. Its text grows upward from that line, so any higher would cut it off. */
+        const val MAX_BOTTOM = 0.8f
+
+        const val YELLOW = 0xFFFFE14D.toInt()
+
+        /** The second subtitle until the viewer changes its look: a little smaller and yellow,
+         *  so the two are told apart at a glance. */
+        fun secondDefault() = SubStyle(scale = 0.9f, color = YELLOW)
+
+        fun load(ctx: Context, prefs: String = PREFS): SubStyle? {
+            val p = ctx.getSharedPreferences(prefs, Context.MODE_PRIVATE)
             if (!p.getBoolean("saved", false)) return null
             return SubStyle(
                 scale = p.getFloat("scale", 1f),
@@ -56,8 +71,8 @@ data class SubStyle(
         }
     }
 
-    fun save(ctx: Context) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+    fun save(ctx: Context, prefs: String = PREFS) {
+        ctx.getSharedPreferences(prefs, Context.MODE_PRIVATE).edit()
             .putBoolean("saved", true)
             .putFloat("scale", scale)
             .putString("background", background)
@@ -97,29 +112,40 @@ class SubtitleControls(
     private val onDelay: (Long) -> Unit,
     /** Opens the sync panel (lining the subtitle up with the sound by ear). */
     private val onSync: (() -> Unit)? = null,
+    /** Where this look is kept, and what "Reset the look" goes back to: the second of two
+     *  subtitles has its own of both. */
+    private val prefs: String = SubStyle.PREFS,
+    private val defaults: () -> SubStyle = { SubStyle() },
+    /** Shown in place of the position chips when the position isn't the viewer's to set (the
+     *  second of two stacked subtitles follows the first). */
+    private val positionNote: String? = null,
 ) {
     private lateinit var panel: SidePanel
     private var delayWorks = true
     private var synced = false
+    /** What the panel already holds above these controls (the tab chips, and the "First / Second"
+     *  chips while two subtitles show): it stays when the controls are drawn again. */
+    private var keep = 1
 
     /** [synced]: the subtitle has been synced by ear, and the delay here is that sync's nudge. */
     fun build(p: SidePanel, delayWorks: Boolean, synced: Boolean = false) {
         panel = p
         this.delayWorks = delayWorks
         this.synced = synced
+        keep = p.body.childCount
         render()
     }
 
     private fun changed() {
-        style.save(ctx)
+        style.save(ctx, prefs)
         onStyle()
         render()
     }
 
     private fun render() {
         val p = panel
-        // Keep the two tab chips at the top (first child), rebuild everything below them.
-        while (p.body.childCount > 1) p.body.removeViewAt(1)
+        // Keep what was there before (see keep), rebuild everything below it.
+        while (p.body.childCount > keep) p.body.removeViewAt(keep)
 
         p.section(Strings.size((style.scale * 100).toInt()))
         p.chips(listOf(
@@ -144,16 +170,22 @@ class SubtitleControls(
 
         p.section(Strings.color)
         p.chips(listOf(
-            Color.WHITE to Strings.white, Color.parseColor("#FFE14D") to Strings.yellow,
+            Color.WHITE to Strings.white, SubStyle.YELLOW to Strings.yellow,
             Color.parseColor("#7FE7FF") to Strings.cyan, Color.parseColor("#8CFF8C") to Strings.green,
         ).map { (c, n) -> Triple(n, style.color == c) { style.color = c; changed() } })
 
         p.section(Strings.position)
-        p.chips(listOf(
-            Triple(Strings.lower, false) { style.bottom = (style.bottom - 0.03f).coerceAtLeast(0f); changed() },
-            Triple(Strings.higher, false) { style.bottom = (style.bottom + 0.03f).coerceAtMost(0.45f); changed() },
-            Triple(Strings.defaultValue, kotlin.math.abs(style.bottom - 0.08f) < 0.01f) { style.bottom = 0.08f; changed() },
-        ))
+        if (positionNote != null) {
+            p.note(positionNote)
+        } else {
+            val top = SubStyle.MAX_BOTTOM
+            p.chips(listOf(
+                Triple(Strings.lower, false) { style.bottom = (style.bottom - 0.03f).coerceAtLeast(0f); changed() },
+                Triple(Strings.higher, false) { style.bottom = (style.bottom + 0.03f).coerceAtMost(top); changed() },
+                Triple(Strings.defaultValue, kotlin.math.abs(style.bottom - 0.08f) < 0.01f) { style.bottom = 0.08f; changed() },
+                Triple(Strings.top, kotlin.math.abs(style.bottom - top) < 0.01f) { style.bottom = top; changed() },
+            ))
+        }
 
         p.section(Strings.font)
         p.chips(listOf(Triple(Strings.bold, style.bold) { style.bold = !style.bold; changed() }))
@@ -177,7 +209,7 @@ class SubtitleControls(
         }
 
         p.action(Strings.resetLook) {
-            val def = SubStyle()
+            val def = defaults()
             style.scale = def.scale; style.background = def.background; style.color = def.color
             style.bottom = def.bottom; style.bold = def.bold; style.boxOpacity = def.boxOpacity
             changed()

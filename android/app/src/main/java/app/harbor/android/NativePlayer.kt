@@ -38,6 +38,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.text.CueGroup
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
@@ -73,6 +74,9 @@ import java.util.concurrent.Executors
  * streams (with "open in another player"), subtitles (embedded + addon, grouped by language, own
  * renderer with instant delay, and a sync panel that lines an addon subtitle up with the sound by
  * ear) and audio/speed (with the sleep timer).
+ *
+ * Two subtitles can show at once: the first is the one above, the second always an addon or saved
+ * one with a view, look, delay and sync of its own (DualSubs decides where each goes).
  *
  * Subtitles saved with a download are listed on their own and are all that shows offline;
  * online, every addon subtitle shows too, each with a button that saves it with the download.
@@ -166,6 +170,44 @@ class NativePlayer(
     private var syncPanel: SyncPanel? = null
     /** The address of the subtitle the open sync panel lists. */
     private var syncPanelFor: String? = null
+    /** Whether that is the second subtitle (it has its own renderer and its own sync). */
+    private var syncSecond = false
+
+    // ---- a second subtitle, shown together with the first ---------------------------------
+    /** The addon (or saved) subtitle shown as the second one; null for none. Its cues are in
+     *  [parsed] like the first one's, and it is drawn by [ext2] in [extView2]. */
+    private var secondId: String? = null
+    private var extView2: SubtitleView? = null
+    private var ext2: ExternalSubs? = null
+    /** The second one's look, saved apart from the first one's. */
+    private var subStyle2 = SubStyle.secondDefault()
+    /** The second subtitle being loaded, and the one that is wanted once it has: a pick made
+     *  while another is still on its way replaces it. */
+    private val loading2 = HashSet<String>()
+    private var wantedSecond: String? = null
+    /** Subtitle files on their way, with who waits for each: one asked for as the first and as
+     *  the second at the same moment is still fetched once. */
+    private val fetching = HashMap<String, ArrayList<(List<CuesWithTiming>?) -> Unit>>()
+    /** The viewer chose (or cleared) the second subtitle in this player's panel: what the page
+     *  remembered from last time no longer counts. */
+    private var userPickedSecond = false
+    /** The second subtitle picked for this episode the last time it played (play's
+     *  "restoreSub2"), until it has been put back. */
+    private var restore2Url: String? = null
+    /** How two subtitles are laid out (saved on the device): stacked, or side by side with the
+     *  sides swapped or not. */
+    private var dualStacked = false
+    private var dualSwapped = false
+    /** Which of the two the "Look and timing" tab is editing. */
+    private var editSecond = false
+    /** Where each subtitle goes, as last worked out (layoutSubtitles). */
+    private var subPlan: DualSubs.Plan? = null
+    /** The second view's distance from the bottom as last set, so it is only set on a change. */
+    private var secondBottom = Float.NaN
+    /** The embedded track that turned out to draw pictures rather than text. */
+    private var pictureTrack: Format? = null
+    private val subMeasure by lazy { SubtitleMeasure(activity) }
+    private val relayoutSubs = Runnable { layoutSubtitles() }
 
     // ---- skip intro / recap / credits ------------------------------------------------------
     private var segments: List<SkipSegment> = emptyList()
