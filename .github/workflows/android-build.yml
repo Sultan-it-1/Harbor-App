@@ -60,7 +60,13 @@ jobs:
 
       - name: Phone smoke test
         run: |
-          pnpm exec playwright install --with-deps chromium
+          # The browser's system packages come from Ubuntu's package servers. When the runner
+          # can't reach them, the install keeps retrying and the job hangs (seen: "Temporary
+          # failure resolving 'archive.ubuntu.com'" for more than ten minutes). So it gets
+          # three minutes; after that only the browser itself is fetched, the runner image
+          # normally has the libraries Chromium needs, and the test below still decides.
+          timeout -k 10 180 pnpm exec playwright install --with-deps chromium \
+            || pnpm exec playwright install chromium
           pnpm run test:phone
 
       - uses: actions/setup-java@v6
