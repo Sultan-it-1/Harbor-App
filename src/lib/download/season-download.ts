@@ -11,6 +11,8 @@ import { runPipeline } from "@/lib/streams/pipeline";
 import { buildStreamIds } from "@/lib/streams/stream-ids";
 import { tmdbImdbId } from "@/lib/providers/tmdb";
 import type { PlayEpisode } from "@/lib/view";
+import { readPlayback } from "@/lib/playback-history";
+import { autoPreferredLangs, buildAutoCandidates, instantSource } from "@/views/play-picker/use-auto-candidates";
 import { loadPickerAddons } from "@/views/play-picker/use-addons";
 import { buildPipelineInput } from "@/views/play-picker/use-pipeline-result";
 import { queueBestDownload } from "./best-source";
@@ -88,8 +90,22 @@ export async function downloadSeason(opts: {
           }),
           signal,
         );
-        // The best stream that is really ready (cached or direct, and not a placeholder clip).
-        const queued = await queueBestDownload({ meta, episode: ep, streams: result.picker.all, debrids, signal });
+        // In the order "Instant" play would try them for this episode, the first one that is
+        // really ready (cached or direct, and not a placeholder clip).
+        const anime = streamIds.some((id) => id.startsWith("kitsu:") || id.startsWith("mal:"));
+        const streams = buildAutoCandidates({
+          filteredPicker: { all: result.picker.all, primary: result.picker.primary },
+          previousPlayback: settings.rememberLastStream ? readPlayback(meta.id, ep.season, ep.episode) : null,
+          sourceEntry: null,
+          isCached: (s) => instantSource(s, debrids),
+          addons,
+          hasStrongAddon: addons.some((a) => /mediafusion|comet/i.test(a.manifest?.name ?? "")),
+          isTorrentioStream: (s) => /torrentio/i.test(s.addonName ?? ""),
+          preferredLangs: autoPreferredLangs(settings.preferredLanguages ?? [], settings.preferredAudioLangs ?? [], anime),
+          season: anime ? null : (ep.imdbSeason ?? ep.season ?? null),
+          episode: anime ? null : (ep.imdbEpisode ?? ep.episode ?? null),
+        });
+        const queued = await queueBestDownload({ meta, episode: ep, streams, debrids, signal });
         ok = queued.ok;
       }
     } catch (e) {

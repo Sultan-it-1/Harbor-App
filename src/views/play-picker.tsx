@@ -38,7 +38,6 @@ import { CachedFilterPill, LanguageFilterPill } from "./play-picker/filter-pills
 import { PickerEmptyLadder } from "./play-picker/picker-empty-ladder";
 import { NoSourcesConfiguredModal } from "./play-picker/no-sources-modal";
 import {
-  hasUncachedMarker,
   isEngineWarmingError,
   normalizeLangCode,
   orderByAddonNative,
@@ -51,7 +50,7 @@ import { StremioLayout } from "./play-picker/stremio-layout";
 import { SourceDrawer } from "./play-picker/source-drawer";
 import { TierStrip } from "./play-picker/tier-strip";
 import { usePickHandler } from "./play-picker/use-pick-handler";
-import { useAutoCandidates } from "./play-picker/use-auto-candidates";
+import { autoPreferredLangs, instantSource, useAutoCandidates } from "./play-picker/use-auto-candidates";
 import { useAutoFire } from "./play-picker/use-auto-fire";
 import { useRoomInvite } from "./play-picker/use-room-invite";
 import { useAddons } from "./play-picker/use-addons";
@@ -156,21 +155,10 @@ export function PlayPicker({
     () => (streamIds ?? []).some((id) => id.startsWith("kitsu:") || id.startsWith("mal:")),
     [streamIds],
   );
-  const preferredLangs = useMemo(() => {
-    const codes = settings.preferredAudioLangs ?? [];
-    const animeAdd = isAnimeRequest ? ["Japanese"] : [];
-    const all = [...baseLangs, ...codes, ...animeAdd];
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const lang of all) {
-      const code = normalizeLangCode(lang);
-      if (!isAnimeRequest && code === "ja") continue;
-      if (seen.has(code)) continue;
-      seen.add(code);
-      out.push(lang);
-    }
-    return out;
-  }, [baseLangs, settings.preferredAudioLangs, isAnimeRequest]);
+  const preferredLangs = useMemo(
+    () => autoPreferredLangs(baseLangs, settings.preferredAudioLangs ?? [], isAnimeRequest),
+    [baseLangs, settings.preferredAudioLangs, isAnimeRequest],
+  );
   const [langFilter, setLangFilter] = useState(
     settings.requirePreferredLanguage === true && baseLangs.length > 0,
   );
@@ -203,12 +191,7 @@ export function PlayPicker({
     [hostMatch],
   );
 
-  const isCached = useCallback(
-    (s: ScoredStream) =>
-      (s.url != null && !s.infoHash && !hasUncachedMarker(s)) ||
-      debrids.some((d) => s.cached[d.slug] === true || s.inLibrary[d.slug] === true),
-    [debrids],
-  );
+  const isCached = useCallback((s: ScoredStream) => instantSource(s, debrids), [debrids]);
   const hasStrongAddon = useMemo(
     () => (addons ?? []).some((a) => /mediafusion|comet/i.test(a.manifest?.name ?? "")),
     [addons],
@@ -496,10 +479,12 @@ export function PlayPicker({
   const bestFailed = bestShown && !bestBusy && resolveError === bestFailText;
   const downloadBest = async () => {
     if (!bestReady || !filteredPicker || bestAcRef.current) return;
-    // In download mode the list is unfiltered, so that anything can be picked by hand. What
-    // Harbor picks by itself goes through the filter the user's level asks for (no trailers,
-    // cam rips, wrong episodes…), as playback's own pick and "Download season" do.
-    let streams = filteredPicker.all;
+    // The sources "Instant" play would go through, in its order: what gets saved is what would
+    // have played (the source played last time first, then the user's languages and addon
+    // order). In download mode the list is unfiltered, so that anything can be picked by hand.
+    // What Harbor picks by itself goes through the filter the user's level asks for (no
+    // trailers, cam rips, wrong episodes…), as playback's own pick and "Download season" do.
+    let streams = autoCandidates;
     if (streamIds && addons) {
       const { trust } = buildPipelineInput({
         meta,
