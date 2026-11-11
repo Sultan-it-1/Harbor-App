@@ -85,6 +85,11 @@ object Strings {
     val stretch get() = t("Stretch", "تمديد")
     val originalSize get() = t("Original size", "الحجم الأصلي")
     fun seconds(n: Int) = t("${n}s", "$n ث")
+    val introSkipped get() = t("Intro skipped", "تم تخطّي المقدمة")
+    val sleepTimerPaused get() = t("Sleep timer: paused", "مؤقت الإيقاف: توقف التشغيل")
+    /** Shown while a finger holds the video down. */
+    val doubleSpeed get() = t("2x speed", "سرعة 2x")
+    val noVideoPlayerApp get() = t("No video player app found", "ما فيه تطبيق لتشغيل الفيديو")
 
     // ---- player: top bar ----
     val back get() = t("Back", "رجوع")
@@ -95,6 +100,9 @@ object Strings {
     val lockScreen get() = t("Lock screen", "قفل الشاشة")
     val unlock get() = t("Unlock", "فتح القفل")
     val nextEpisode get() = t("Next episode", "الحلقة التالية")
+    val skipIntro get() = t("Skip intro", "تخطّي المقدمة")
+    val skipRecap get() = t("Skip recap", "تخطّي الملخص")
+    val skipCredits get() = t("Skip credits", "تخطّي الشارة")
     val close get() = t("Close", "إغلاق")
 
     // ---- player: sources panel ----
@@ -102,6 +110,11 @@ object Strings {
     val noOtherSources get() = t("There are no other sources for this title.", "ما فيه مصادر ثانية لهذا العنوان.")
     val noSourcesInQuality get() = t("No sources in this quality.", "ما فيه مصادر بهذه الجودة.")
     val all get() = t("All", "الكل")
+    val openInAnotherPlayer get() = t("Open in another player", "فتح في مشغّل آخر")
+    val anotherPlayerHeadersNote get() = t(
+        "This source needs extra request headers. Some players ignore them, so it may not play there.",
+        "هذا المصدر يحتاج ترويسات طلب إضافية. بعض المشغّلات تتجاهلها، فممكن ما يشتغل فيها.",
+    )
 
     // ---- player: subtitles panel ----
     val unknownLanguage get() = t("Unknown", "غير محددة")
@@ -175,6 +188,11 @@ object Strings {
     val noAudioTracks get() = t("There are no audio tracks.", "ما فيه مسارات صوت.")
     val playbackSpeed get() = t("Playback speed", "سرعة التشغيل")
     val normalSpeed get() = t("Normal", "عادي")
+    val sleepTimer get() = t("Sleep timer", "مؤقت الإيقاف")
+    fun sleepTimerLeft(minutes: Int) = t("Sleep timer · $minutes min left", "مؤقت الإيقاف · باقي $minutes دقيقة")
+    val sleepOff get() = t("Off", "إيقاف")
+    fun minutes(n: Int) = t("$n min", "$n دقيقة")
+    val sleepEndOfVideo get() = t("End of this video", "نهاية هذا الفيديو")
 
     // ---- download notifications ----
     val downloadsChannel get() = t("Downloads", "التحميلات")

@@ -162,6 +162,8 @@ export type Settings = {
   autoSkipIntro: boolean;
   /** Look up intro/credits times online (sends the title's id to TheIntroDB / AniSkip). */
   skipLookups: boolean;
+  /** Optional personal TheIntroDB API key, sent as a Bearer token. Empty: no key is sent. */
+  theIntroDbKey: string;
   trackBlockWords: string[];
   forcedSubsWhenNativeAudio: boolean;
   tmdbLanguage: string;

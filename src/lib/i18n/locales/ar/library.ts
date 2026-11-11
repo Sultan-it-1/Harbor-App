@@ -129,6 +129,12 @@ const library: Record<string, string> = {
   "No picks loaded. TMDB might be unreachable.": "لم تُحمّل أي اختيارات. قد يتعذّر الوصول إلى TMDB.",
   "Watchlist is what you've saved for later. History is everything you've watched.": "قائمة المشاهدة هي ما حفظته لوقت لاحق. السجل هو كل ما شاهدته.",
   "Long-press any title in Harbor or tap \"Add to Watchlist\" on its detail page to save it here.": "اضغط مطوّلاً على أي عنوان في Harbor أو اضغط \"أضف إلى قائمة المشاهدة\" في صفحة تفاصيله لحفظه هنا.",
+
+  // Continue Watching: the next episode is not out yet.
+  "Airing soon": "يُعرض قريبًا",
+  "Airs in {days}d": "يُعرض بعد {days} يوم",
+  "Airs in {days}d {hours}h": "يُعرض بعد {days} يوم و{hours} ساعة",
+  "Airs in {hours}h": "يُعرض بعد {hours} ساعة",
 };
 
 export default library;

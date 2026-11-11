@@ -74,7 +74,9 @@ export type NativePlayerEvent =
   | { type: "next" }
   | { type: "subSearch" }
   /** The viewer's own pick in the native subtitle panel ([lang]: the track's language code). */
-  | { type: "subsChoice"; off: boolean; lang?: string };
+  | { type: "subsChoice"; off: boolean; lang?: string }
+  /** The exact addon subtitle the viewer picked there; it follows that pick's subsChoice. */
+  | { type: "subPicked"; url: string; lang?: string; label?: string };
 
 type NativeFetchResult =
   | { ok: true; status: number; url: string; headers: Record<string, string>; body: string }

@@ -356,6 +356,12 @@ export function useAutoRetry(params: {
   useEffect(() => {
     if (snap.status === "ended") return;
     if (isP2pEngine && !engineFailure) return;
+    // A source the viewer picked by hand is not given up on after a short wait: a slow
+    // debrid link or a big file can need longer than this to open, and leaving the player
+    // then looked like an error when nothing had failed. The short timer is only for
+    // automatic play (and rooms), where the next source is tried without asking. A real
+    // player error still ends a hand-picked source through the error handling above.
+    if (!instantPlay && !inRoom) return;
     if (snap.durationSec > 0 || getPlaybackPosition() > 1) return;
     const t = window.setTimeout(() => {
       if (snap.durationSec === 0 && getPlaybackPosition() === 0) {
@@ -363,7 +369,7 @@ export function useAutoRetry(params: {
       }
     }, STUCK_AUTORETRY_MS);
     return () => window.clearTimeout(t);
-  }, [src.url, snap.durationSec, snap.status, triggerAutoRetry, isP2pEngine, engineFailure]);
+  }, [src.url, snap.durationSec, snap.status, triggerAutoRetry, isP2pEngine, engineFailure, instantPlay, inRoom]);
 
   useEffect(() => {
     if (!inRoom || isLocal || isLive) return;

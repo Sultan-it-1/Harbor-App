@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { androidApi, isAndroidApp, onNativePlayerEvent } from "@/lib/android";
 import { peekPickerCache } from "@/lib/picker-cache";
 import type { ScoredStream } from "@/lib/streams/types";
+import type { SkipSegment } from "@/lib/skip-intro";
 import type { PlayerSrc, PlayerStreamRef, PlayEpisode } from "@/lib/view";
 import { t } from "@/lib/i18n";
 import { badgeLabel, streamBadges } from "@/components/format-badge";
@@ -128,5 +129,47 @@ export function useAndroidPlayerExtras(params: {
         if (cur.nextEp) cur.goNext();
       }
     });
+  }, [enabled]);
+}
+
+/**
+ * Android app: the page's own skip button is hidden under the native player, so the native
+ * player draws one. It gets the intro / recap / credits segments whenever they change (an empty
+ * list when there are none), and whether intros are skipped without asking. The list carries the
+ * title it belongs to (the key the player is given with play), because it can get there before
+ * that title starts and must not act on the one still playing.
+ */
+export function useAndroidSkipSegments(params: {
+  src: PlayerSrc;
+  segments: SkipSegment[];
+  autoSkipIntro: boolean;
+}) {
+  const { src, segments, autoSkipIntro } = params;
+  const enabled = isAndroidApp();
+  // Same shape as the contentKey in use-bridge-load.ts.
+  const contentKey = `${src.meta.id}|${src.episode?.season ?? ""}|${src.episode?.episode ?? ""}`;
+  // As text, so a list rebuilt with the same segments is not sent again.
+  const command = useMemo(
+    () =>
+      JSON.stringify({
+        cmd: "segments",
+        contentKey,
+        autoSkipIntro,
+        segments: segments.map((s) => ({
+          kind: s.kind,
+          startMs: Math.max(0, Math.round(s.startSec * 1000)),
+          endMs: Math.max(0, Math.round(s.endSec * 1000)),
+        })),
+      }),
+    [contentKey, autoSkipIntro, segments],
+  );
+  useEffect(() => {
+    if (!enabled) return;
+    androidApi()?.command(command);
+  }, [enabled, command]);
+  // Leaving the player: nothing is left behind for whatever plays next.
+  useEffect(() => {
+    if (!enabled) return;
+    return () => send({ cmd: "segments", contentKey: "", autoSkipIntro: false, segments: [] });
   }, [enabled]);
 }

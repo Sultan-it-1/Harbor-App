@@ -1,6 +1,7 @@
 import { safeFetch as fetch } from "@/lib/safe-fetch";
 import { readResumeEntry } from "@/lib/resume";
 import { isDetectedAnime } from "./anime-detect";
+import { manualWatchedState } from "./manual-watched";
 
 const API = "https://api.strem.io/api";
 
@@ -35,8 +36,15 @@ export type LibraryItem = {
   _ctime: string;
   _mtime: string;
   external?: "simkl";
+  /** The same title's other ids (IMDb, TMDB), used to merge and dismiss Continue Watching copies. */
+  altIds?: string[];
+  /** Release year, where the source gives one (the trackers do): two titles of one name differ by it. */
+  year?: number;
   isAnime?: boolean;
   upNext?: boolean;
+  /** The next episode has not aired yet: the card stays and says when it does. */
+  waitingForAir?: boolean;
+  nextAirDate?: string;
   local?: boolean;
 };
 
@@ -74,12 +82,25 @@ function resumeForItem(i: LibraryItem): { ms: number; t: number } | null {
 }
 
 export function cwSortKey(i: LibraryItem): number {
-  const fromState = Date.parse(i.state?.lastWatched ?? i._mtime ?? "");
-  if (Number.isFinite(fromState)) return fromState;
-  return resumeForItem(i)?.t ?? 0;
+  // The latest of the three, not the first one found: a position saved on this device (or synced
+  // from an account) is dated in harbor.resume without touching the cloud item's own dates, and a
+  // card just played here must not sort by a stale cloud date.
+  const lastWatched = Date.parse(i.state?.lastWatched ?? "");
+  const m = i._mtime as unknown;
+  const mtime = typeof m === "number" ? m : Date.parse(String(m ?? ""));
+  let best = resumeForItem(i)?.t ?? 0;
+  if (Number.isFinite(lastWatched)) best = Math.max(best, lastWatched);
+  if (Number.isFinite(mtime)) best = Math.max(best, mtime);
+  return best;
 }
 
-export function isCwMember(i: LibraryItem): boolean {
+/**
+ * [advancing]: the caller moves a finished series on to its next episode (Home's row, with that
+ * setting on). Only then is a series kept whose episode was watched elsewhere and marked watched
+ * here: there is no position to continue, but there may be a next episode to offer. A row that
+ * shows cards as they are would show the finished episode at 0 %.
+ */
+export function isCwMember(i: LibraryItem, opts?: { advancing?: boolean }): boolean {
   if (i.removed && !i.temp) return false;
   if (!i.state) {
     const local = resumeForItem(i)?.ms ?? 0;
@@ -91,7 +112,17 @@ export function isCwMember(i: LibraryItem): boolean {
   if (dur > 0 && dur < 90_000) return false;
   // A start mark of a few milliseconds (written as a source began) isn't progress either.
   if (i.state.timeOffset > 5_000) return true;
-  if ((i.state.flaggedWatched ?? 0) > 0) return false;
+  if ((i.state.flaggedWatched ?? 0) > 0) {
+    if (opts?.advancing === true && i.type === "series") {
+      const se = episodeFromVideoId(i.state.video_id);
+      const season = i.state.season ?? se?.season;
+      const episode = i.state.episode ?? se?.episode;
+      if (season != null && season > 0 && episode != null && episode > 0) {
+        return manualWatchedState(i._id, season, episode) === true;
+      }
+    }
+    return false;
+  }
   const local = resumeForItem(i)?.ms ?? 0;
   if (local <= 0) return false;
   const duration = i.state.duration ?? 0;

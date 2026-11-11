@@ -144,6 +144,7 @@ export const DEFAULT: Settings = {
   betaUpdates: false,
   autoSkipIntro: false,
   skipLookups: true,
+  theIntroDbKey: "",
   trackBlockWords: ["commentary"],
   forcedSubsWhenNativeAudio: false,
   tmdbLanguage: "",

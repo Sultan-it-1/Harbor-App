@@ -41,6 +41,8 @@ export const ContinueCard = memo(function ContinueCard({ item, watched = false, 
   const progress = dur > 0 ? Math.min(1, off / dur) : 0;
   const remaining = dur > 0 && !isExternal ? formatRemaining(t, dur - off) : "";
   const upNext = item.upNext === true;
+  // The next episode is not out yet: when it airs, in place of "Up Next".
+  const airsIn = item.waitingForAir === true ? formatAirsIn(t, item.nextAirDate) : "";
   const kitsuThreeSeg =
     /^(kitsu|mal|anilist|anidb):/.test(item._id) &&
     (item.state?.video_id ?? "").split(":").length === 3;
@@ -272,8 +274,10 @@ export const ContinueCard = memo(function ContinueCard({ item, watched = false, 
               <Play size={11} fill="currentColor" className="text-ink" />
             )}
             {sub && <span className="font-medium text-ink">{sub}</span>}
-            {sub && (upNext || remaining) && <span className="text-ink-subtle">·</span>}
-            {upNext ? (
+            {sub && (airsIn || upNext || remaining) && <span className="text-ink-subtle">·</span>}
+            {airsIn ? (
+              <span className="font-medium text-ink-muted">{airsIn}</span>
+            ) : upNext ? (
               <span className="font-medium text-accent">{t("Up Next")}</span>
             ) : (
               remaining && <span className="text-ink-muted">{remaining}</span>
@@ -337,6 +341,24 @@ export const ContinueCard = memo(function ContinueCard({ item, watched = false, 
 function downscaleTmdb(url?: string): string | undefined {
   if (!url) return url;
   return url.replace(/\/t\/p\/(original|w1280|w780|w500)\//, "/t/p/w300/");
+}
+
+/** When an episode that is not out yet airs: "Airs in 2d", or to the hour where the date has a
+ *  time of day. Most lists give the day alone; counting hours to its midnight would be made up. */
+export function formatAirsIn(
+  t: (key: string, vars?: Record<string, string | number>) => string,
+  airDate: string | undefined,
+  now = Date.now(),
+): string {
+  const at = airDate ? Date.parse(airDate) : NaN;
+  const diff = at - now;
+  if (!Number.isFinite(diff) || diff <= 0) return t("Airing soon");
+  if ((airDate ?? "").length <= 10) return t("Airs in {days}d", { days: Math.ceil(diff / 86_400_000) });
+  const days = Math.floor(diff / 86_400_000);
+  const hours = Math.floor((diff % 86_400_000) / 3_600_000);
+  if (days > 0) return t("Airs in {days}d {hours}h", { days, hours });
+  if (hours > 0) return t("Airs in {hours}h", { hours });
+  return t("Airing soon");
 }
 
 export function formatRemaining(t: (key: string, vars?: Record<string, string | number>) => string, ms: number) {

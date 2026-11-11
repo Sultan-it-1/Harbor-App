@@ -5,7 +5,7 @@ import { useDebridClients } from "@/lib/debrid/registry";
 import { useSettings } from "@/lib/settings";
 import { isWeb } from "@/lib/platform";
 import { NATIVE_PLAYER_CLOSED_EVENT, isAndroidApp } from "@/lib/android";
-import { useAndroidPlayerExtras } from "./player/hooks/use-android-extras";
+import { useAndroidPlayerExtras, useAndroidSkipSegments } from "./player/hooks/use-android-extras";
 import { writePlayerVolume } from "@/lib/player-volume";
 import { nameColor } from "@/lib/together/colors";
 import { useTogether } from "@/lib/together/provider";
@@ -602,6 +602,13 @@ export function PlayerView({ src }: { src: PlayerSrc }) {
     setSkipSegmentsView(skipSegments);
     return () => setSkipSegmentsView([]);
   }, [skipSegments]);
+  // Android app: the native player shows the skip button and skips intros (a room guest never
+  // skips by itself, as in the page's own player).
+  useAndroidSkipSegments({
+    src,
+    segments: skipSegments,
+    autoSkipIntro: settings.autoSkipIntro === true && !roomGuest,
+  });
   const hasNextEpisodeNow = canChangeEpisode && !!adjacent.next;
 
   useMpvEmbed({ engine, settings });

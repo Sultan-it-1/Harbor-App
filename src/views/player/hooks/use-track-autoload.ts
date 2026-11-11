@@ -3,6 +3,8 @@ import type { PlayerBridge, PlayerSnapshot } from "@/lib/player/bridge";
 import { applySubStyle } from "@/lib/player/sub-style";
 import { langScore, pickBestTrack } from "@/lib/subtitles/language";
 import { searchSubtitles } from "@/lib/subtitles/search";
+import { rankSubtitleCandidates } from "@/lib/subtitles/candidate-ranking";
+import type { StreamHints } from "@/lib/subtitles/stream-hints";
 import { readPlayerPrefs, type PerShowPrefs } from "@/lib/player-prefs";
 import { tmdbImdbId } from "@/lib/providers/tmdb";
 import type { Addon } from "@/lib/addons";
@@ -105,6 +107,17 @@ export function useTrackAutoload(params: {
       langs,
       manual,
     });
+    // What is known about the file being played, so subtitles made for the same release
+    // (same group, same source, same cut) can be put first: those are the ones in sync.
+    const hints: StreamHints = {
+      release: releaseNameOf(src.streamRef),
+      source: src.streamRef?.source ?? null,
+      resolution: src.streamRef?.resolution ?? null,
+      // Anime is numbered differently from place to place (season 2 episode 3 is "27" on
+      // many releases), so an episode number is not used as evidence for or against there.
+      season: subIsAnime ? null : (src.episode?.season ?? null),
+      episode: subIsAnime ? null : (src.episode?.episode ?? null),
+    };
     const results = await searchSubtitles(
       {
         imdbId: resolvedImdbId,
@@ -123,11 +136,7 @@ export function useTrackAutoload(params: {
         },
         addons: userAddonsRef.current ?? [],
         preferredLangs: langs,
-        streamHints: {
-          release: src.streamRef?.title ?? src.streamRef?.parsedTitle ?? null,
-          source: src.streamRef?.source ?? null,
-          resolution: src.streamRef?.resolution ?? null,
-        },
+        streamHints: hints,
       },
     );
     console.info(`[subs/autoload] search returned ${results.length} subs`);
@@ -137,15 +146,29 @@ export function useTrackAutoload(params: {
       if (manual) notifyAndroidSubSearch(0, true);
       return;
     }
-    // Android: the native player lists subtitles by language and only downloads the one you
-    // pick, so it gets every language the addons returned (preferred ones first — results are
-    // already ranked). Other engines keep the preferred-language filter.
+    // The player shows the list in the order it is given and starts with the first subtitle
+    // of the best preferred language, so the order is the ranking:
+    //   1. preferred languages, best match for the playing file first;
+    //   2. preferred-language subtitles the ranking set aside (made for another source or
+    //      cut, forced-only...): still there to pick by hand, never ahead of a good one;
+    //   3. Android only: every other language. The native player lists subtitles by
+    //      language and only downloads the one you pick. Other engines keep the
+    //      preferred-language filter.
     const android = isAndroidApp();
-    const matches = android ? results : results.filter((r) => langScore(r.lang ?? "", langs) >= 0);
-    console.info(`[subs/autoload] ${matches.length} match preferred langs`);
+    const ranked = rankSubtitleCandidates(results, langs, hints);
+    const rankedSet = new Set(ranked);
+    const preferredLang = (r: { lang?: string }) => langScore(r.lang ?? "", langs) >= 0;
+    const setAside = results.filter((r) => !rankedSet.has(r) && preferredLang(r));
+    const otherLangs = android ? results.filter((r) => !preferredLang(r)) : [];
+    const matches = [...ranked, ...setAside, ...otherLangs];
+    console.info(
+      `[subs/autoload] ${ranked.length} ranked + ${setAside.length} set aside in preferred langs, ${otherLangs.length} other`,
+    );
     const perLang = new Map<string, number>();
+    // 15 per preferred language on Android: with the best ones first, a longer list only
+    // makes the picker harder to read on a phone.
     const maxForLang = (lang: string) =>
-      langScore(lang, langs) > 0 ? (android ? 30 : 25) : android ? 8 : 6;
+      langScore(lang, langs) > 0 ? (android ? 15 : 25) : android ? 8 : 6;
     let attempted = 0;
     let added = 0;
     for (const r of matches) {
@@ -350,6 +373,19 @@ function resolveLangPreference(
 function isJapanese(lang: string): boolean {
   const l = lang.trim().toLowerCase();
   return l === "ja" || l === "jpn" || l === "jp" || l === "japanese";
+}
+
+/**
+ * The playing file's release name, for matching subtitles to it. An addon's title is
+ * several lines (name, file name, then seeders and size) and the ranking reads an unlisted
+ * release group only from the very end of the text. Our stream parser has already found
+ * the group, so it is put on a last line of its own, where the ranking looks.
+ */
+function releaseNameOf(ref: PlayerSrc["streamRef"]): string | null {
+  const title = ref?.title ?? ref?.parsedTitle ?? null;
+  const group = ref?.releaseGroup?.trim();
+  if (!group || !/^[A-Za-z0-9]{3,20}$/.test(group)) return title;
+  return title ? `${title}\n-${group}` : `-${group}`;
 }
 
 function labelForTrack(r: { title?: string; source: string; release?: string | null }): string {

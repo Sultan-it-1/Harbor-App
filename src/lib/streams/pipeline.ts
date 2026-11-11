@@ -4,6 +4,7 @@ import { dlog } from "@/lib/debug";
 import type { DebridStore } from "@/lib/debrid/types";
 import { fetchAddonStreams, type StreamRequest } from "./addons";
 import { enhanceAnimeStreams } from "./anitomy";
+import { streamKey } from "./identity";
 import { fetchLibraryStreams, type LibraryQuery } from "./library";
 import { parseStream } from "./parser";
 import { applyTrust, type Rejection, type TrustOptions } from "./trust";
@@ -304,12 +305,21 @@ async function runCorePipeline(
 }
 
 function mergeAndDedupe(library: Stream[], addons: Stream[]): Stream[] {
-  const out: Stream[] = [];
-  for (const s of library) {
-    out.push({ ...s, contributors: [{ id: s.addonId, name: s.addonName }] });
+  const seen = new Map<string | Stream, Stream>();
+  for (const s of [...library, ...addons]) {
+    const identity = streamKey(s);
+    // Addon tabs filter by the owning installation. Sharing a playback endpoint
+    // must not remove either installation's row, metadata, or native ordering.
+    // (The lists that arrive while addons are still answering are not deduplicated
+    // where they are fetched, so the same rule is applied here.)
+    const key =
+      typeof identity === "string" ? JSON.stringify([s.addonUrl, s.addonId, identity]) : identity;
+    const prior = seen.get(key);
+    if (!prior) {
+      seen.set(key, { ...s, contributors: [{ id: s.addonId, name: s.addonName }] });
+    } else if (s.sources?.length) {
+      prior.sources = [...new Set([...(prior.sources ?? []), ...s.sources])];
+    }
   }
-  for (const s of addons) {
-    out.push({ ...s, contributors: [{ id: s.addonId, name: s.addonName }] });
-  }
-  return out;
+  return [...seen.values()];
 }

@@ -16,6 +16,7 @@ import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.content.ContextCompat
+import androidx.core.view.doOnLayout
 
 /** Colours shared with the web UI (dark theme, warm accent). */
 object HarborColors {
@@ -148,11 +149,15 @@ class SidePanel(private val ctx: Context, private val host: FrameLayout, title: 
 
     // ---- content builders ---------------------------------------------------------------
 
-    fun section(text: String) {
-        body.addView(ctx.label(text, 12.5f, HarborColors.SUBTLE, bold = true).apply {
+    /** A section heading. Returned so a heading that counts down (the sleep timer) can be updated
+     *  without building the panel again. */
+    fun section(text: String): TextView {
+        val v = ctx.label(text, 12.5f, HarborColors.SUBTLE, bold = true).apply {
             setPadding(ctx.dp(4), ctx.dp(16), 0, ctx.dp(6))
             letterSpacing = 0.06f
-        })
+        }
+        body.addView(v)
+        return v
     }
 
     fun note(text: String) {
@@ -220,14 +225,25 @@ class SidePanel(private val ctx: Context, private val host: FrameLayout, title: 
     /** Horizontally scrolling chips. */
     fun chips(items: List<Triple<String, Boolean, () -> Unit>>) {
         val line = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        var lit: View? = null
         items.forEach { (text, on, click) ->
-            line.addView(chip(text, on, click), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ctx.dp(36)).apply { marginEnd = ctx.dp(8) })
+            val c = chip(text, on, click)
+            if (on && lit == null) lit = c
+            line.addView(c, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ctx.dp(36)).apply { marginEnd = ctx.dp(8) })
         }
-        body.addView(HorizontalScrollView(ctx).apply {
+        val row = HorizontalScrollView(ctx).apply {
             isHorizontalScrollBarEnabled = false
             addView(line)
             setPadding(0, ctx.dp(4), 0, ctx.dp(4))
-        })
+        }
+        body.addView(row)
+        // A row wider than the panel is built again after every tap, back at its start: bring the
+        // chosen chip into view when it is out of it.
+        val chosen = lit ?: return
+        row.doOnLayout {
+            val hidden = chosen.left < row.scrollX || chosen.right > row.scrollX + row.width
+            if (hidden) row.scrollTo(chosen.left - ctx.dp(24), 0)
+        }
     }
 
     fun chip(text: String, on: Boolean, click: () -> Unit) = ctx.label(text, 13.5f, if (on) Color.BLACK else HarborColors.TEXT, bold = on).apply {

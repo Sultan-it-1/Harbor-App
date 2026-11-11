@@ -118,7 +118,8 @@ export function LiveView({ active }: { active: boolean }) {
     () => sources.filter((s) => s.kind === "epg").map((s) => s.epgUrl || s.url),
     [sources],
   );
-  const { index: baseEpg, error: epgError } = useEpg(active ? activeSource : null, epgOnlyUrls);
+  // No guide URL typed in: use the one the playlist names in its own #EXTM3U header (read when the list was loaded).
+  const { index: baseEpg, error: epgError } = useEpg(active && activeSource ? { ...activeSource, epgUrl: activeSource.epgUrl || (playlist?.id === activeSource.id ? playlist.epgUrl : null) || undefined } : null, epgOnlyUrls);
   const epg = useXtreamEpgFallback(activeSource, playlist?.channels ?? EMPTY_CHANNELS, baseEpg);
   const nowMs = useNowTick(30_000);
 

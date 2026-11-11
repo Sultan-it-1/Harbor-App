@@ -28,8 +28,10 @@ import { useSettings, type StreamingService } from "@/lib/settings";
 import { trackEvent } from "@/lib/discover";
 import { publishResumeStates } from "@/lib/hover-preview/store";
 import { readResumeEntry, saveResumeBatch } from "@/lib/resume";
+import { dedupeCwItems } from "@/lib/cw-dedupe";
 import { dismissCw, isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import { clearLocalCw, listLocalCw, localCwVersion, subscribeLocalCw } from "@/lib/local-cw";
+import { manualWatchedVersion, subscribeManualWatched } from "@/lib/manual-watched";
 import { repairLibraryNames } from "@/lib/stremio-repair";
 import {
   cwSortKey,
@@ -359,7 +361,9 @@ export function Home({ active = true }: { active?: boolean }) {
 
   const localCwVer = useSyncExternalStore(subscribeLocalCw, localCwVersion);
   const animeDetectVer = useDetectedAnimeVersion();
-  const continueWatching = useMemo(() => {
+  // An episode marked watched can bring its series into the row (see isCwMember).
+  const manualWatchedVer = useSyncExternalStore(subscribeManualWatched, manualWatchedVersion);
+  const cwDeduped = useMemo(() => {
     const localCwItems: LibraryItem[] = listLocalCw().map((e) => ({
       _id: e.id,
       type: e.type,
@@ -383,37 +387,31 @@ export function Home({ active = true }: { active?: boolean }) {
       _mtime: new Date(e.t).toISOString(),
       local: true,
     }));
-    const eligible = [...items, ...simklCw, ...localCwItems]
+    // "Up Next" and the air date are added by this page. An older version sent them to the
+    // Stremio cloud with a removed card: read back from there they mean nothing.
+    const cloudItems = items.map((i) =>
+      i.upNext || i.waitingForAir ? { ...i, upNext: undefined, waitingForAir: undefined, nextAirDate: undefined } : i,
+    );
+    const eligible = [...cloudItems, ...simklCw, ...localCwItems]
       .filter(
         (i) =>
           (i.type as string) !== "other" &&
           !i._id.startsWith("iptv:") &&
           !isCwDismissed(i) &&
-          isCwMember(i) &&
+          isCwMember(i, { advancing: settings.cwAdvanceNext }) &&
           !(settings.animeOnlyInAnimeRoom && isAnimeCwItem(i)),
       )
       .map((i) => ({ i, k: cwSortKey(i) }))
       .sort((a, b) => b.k - a.k)
       .map((e) => e.i);
-    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "").trim();
-    const ns = (id: string) => (id.startsWith("tt") ? "tt" : id.split(":")[0]);
-    const seenId = new Set<string>();
-    const seenKey = new Map<string, { ns: string; vid: string }>();
-    const out: typeof eligible = [];
-    for (const i of eligible) {
-      if (seenId.has(i._id)) continue;
-      const key = `${i.type}:${norm(i.name ?? "")}`;
-      const kept = seenKey.get(key);
-      const vid = i.state?.video_id ?? "";
-      if (kept !== undefined && kept.ns !== ns(i._id) && kept.vid === vid) continue;
-      seenId.add(i._id);
-      if (kept === undefined) seenKey.set(key, { ns: ns(i._id), vid });
-      out.push(i);
-      if (out.length >= 100) break;
-    }
-    return out;
-  }, [items, simklCw, localCwVer, cwVersion, settings.animeOnlyInAnimeRoom, animeDetectVer]);
-  const cwItems = useCwAdvance(continueWatching, settings.tmdbKey, settings.cwAdvanceNext);
+    // One card per title, whichever sources it came from (and whatever id each knows it by).
+    return dedupeCwItems(eligible, 100);
+  }, [items, simklCw, localCwVer, cwVersion, settings.animeOnlyInAnimeRoom, settings.cwAdvanceNext, animeDetectVer, manualWatchedVer]);
+  const continueWatching = cwDeduped.items;
+  // The copies each card stands for, read when a card is removed.
+  const cwAbsorbedRef = useRef(cwDeduped.absorbed);
+  cwAbsorbedRef.current = cwDeduped.absorbed;
+  const cwItems = useCwAdvance(continueWatching, settings.tmdbKey, settings.cwAdvanceNext, traktWatched);
 
   useEffect(() => {
     void detectAnimeForCw(items);
@@ -425,8 +423,16 @@ export function Home({ active = true }: { active?: boolean }) {
 
   const onDismissCw = useCallback(
     (item: LibraryItem) => {
-      if (item.local) clearLocalCw(item._id);
-      else dismissCw(item, authKey);
+      // Every card is marked removed, and the device's own entry for the id goes too: before, a
+      // Stremio card removed here came back as its local copy.
+      dismissCw(item, authKey);
+      clearLocalCw(item._id);
+      // The card stood for these copies too (the same title from another source): left alone,
+      // one of them would take its place.
+      for (const copy of cwAbsorbedRef.current.get(item._id) ?? []) {
+        dismissCw(copy, authKey);
+        clearLocalCw(copy._id);
+      }
     },
     [authKey],
   );

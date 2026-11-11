@@ -24,6 +24,7 @@ class StringsTest {
         Strings.subtitlesFound(1), Strings.subtitlesFound(7), Strings.size(130), Strings.boxOpacity(70),
         Strings.delay("+0.5"), Strings.downloadingFiles(1), Strings.downloadingFiles(4),
         Strings.sizeOf("10 MB", "1.20 GB"), Strings.downloadFailedHint("Film"),
+        Strings.sleepTimerLeft(23), Strings.minutes(15),
     )
 
     @Test
