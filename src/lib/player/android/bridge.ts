@@ -143,6 +143,56 @@ function nativeSub(url: string, lang?: string, rawTitle?: string): NativeSub {
   return { url, lang: lang ? toLangCode(lang) : undefined, label: label ?? undefined };
 }
 
+// The exact addon subtitle the viewer picked for an episode, kept per content key
+// (title | season | episode), so the same one comes back the next time that episode plays.
+const SUB_MEMORY_KEY = "harbor.subtitle.memory.v1";
+const SUB_MEMORY_MAX = 500;
+type RememberedSub = NativeSub & { at: number };
+
+function readSubMemory(): Record<string, RememberedSub> {
+  try {
+    const raw = localStorage.getItem(SUB_MEMORY_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, RememberedSub>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The subtitle remembered for this episode, in the shape the native player takes. */
+function rememberedSub(contentKey: string): NativeSub | null {
+  if (!contentKey) return null;
+  const hit = readSubMemory()[contentKey];
+  if (!hit || typeof hit.url !== "string" || !hit.url) return null;
+  return {
+    url: hit.url,
+    lang: typeof hit.lang === "string" && hit.lang ? hit.lang : undefined,
+    label: typeof hit.label === "string" && hit.label ? hit.label : undefined,
+  };
+}
+
+/** Remembers the pick for this episode; null forgets it. Only the newest entries are kept. */
+function rememberSub(contentKey: string, sub: NativeSub | null) {
+  if (!contentKey) return;
+  try {
+    const all = readSubMemory();
+    if (!sub) {
+      if (!(contentKey in all)) return;
+      delete all[contentKey];
+    } else {
+      all[contentKey] = { url: sub.url, lang: sub.lang, label: sub.label, at: Date.now() };
+    }
+    const entries = Object.entries(all);
+    const kept =
+      entries.length > SUB_MEMORY_MAX
+        ? Object.fromEntries(entries.sort((a, b) => (b[1]?.at ?? 0) - (a[1]?.at ?? 0)).slice(0, SUB_MEMORY_MAX))
+        : all;
+    localStorage.setItem(SUB_MEMORY_KEY, JSON.stringify(kept));
+  } catch {
+    /* storage full or unavailable: the pick just isn't remembered */
+  }
+}
+
 /** Plays through the Android shell's native ExoPlayer (FFmpeg audio decoders included). */
 /** Lets the native player say "no subtitles found" instead of staying silent. */
 export function notifyAndroidSubSearch(found: number, manual = false) {
@@ -183,6 +233,13 @@ export function createAndroidBridge(): PlayerBridge {
       // subtitle picked by hand turns them back on for it.
       const id = metaIdOf(lastContentKey);
       if (id) writePlayerPrefs(id, e.off ? { subsOff: true } : { subsOff: false, ...(e.lang ? { subLang: e.lang } : {}) });
+      // "Off", or a track inside the file: the addon subtitle remembered for this episode no
+      // longer stands. (A pick from the addons says so itself right after, with subPicked.)
+      rememberSub(lastContentKey, null);
+      return;
+    }
+    if (e.type === "subPicked") {
+      if (e.url) rememberSub(lastContentKey, { url: e.url, lang: e.lang, label: e.label });
       return;
     }
     if (e.type === "state") {
@@ -244,6 +301,16 @@ export function createAndroidBridge(): PlayerBridge {
         lastContentKey = src.contentKey;
         lastDownloadId = src.downloadId ?? "";
       }
+      const contentKey = src.contentKey ?? lastContentKey;
+      const subsOff = startSubsOff(contentKey);
+      // The subtitle picked for this episode last time: the native player puts it back in place
+      // of its automatic choice. It has to be in the list it is given (it may sit past the first
+      // few, or come from a search that has not run yet). Not when subtitles start off.
+      const restoreSub = !subsOff && src.isLive !== true ? rememberedSub(contentKey) : null;
+      if (restoreSub && !sentSubUrls.has(restoreSub.url)) {
+        sentSubUrls.add(restoreSub.url);
+        initialSubs.push(restoreSub);
+      }
       api?.play(
         JSON.stringify({
           url: src.url,
@@ -255,9 +322,10 @@ export function createAndroidBridge(): PlayerBridge {
           subStyle: harborSubStyle(),
           title,
           isLive: src.isLive === true,
-          contentKey: src.contentKey ?? lastContentKey,
+          contentKey,
           downloadId: src.contentKey != null ? (src.downloadId ?? "") : lastDownloadId,
-          subsOff: startSubsOff(src.contentKey ?? lastContentKey),
+          subsOff,
+          ...(restoreSub ? { restoreSub } : {}),
         }),
       );
     },
