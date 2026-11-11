@@ -18,6 +18,8 @@ import {
   streamMatchesPreferredSource,
 } from "@/lib/playback-history";
 import { useSettings } from "@/lib/settings";
+import { filterStreamsByMode } from "@/lib/streams/mode";
+import { torrentEngineAvailable } from "@/lib/torrent/stremio-stream";
 import type { ScoredStream, Tier } from "@/lib/streams/types";
 import { isAddonRanked } from "@/lib/streams/addon-detect";
 import { useView, type PlayEpisode } from "@/lib/view";
@@ -209,7 +211,12 @@ export function PlayPicker({
 
   const filteredPicker = useMemo(() => {
     if (!result) return null;
-    let all = result.picker.all;
+    // Settings > Streaming sources > Source mode. "Torrents only" needs a torrent engine;
+    // where there is none (the Android app) a saved "p2p" means everything, or the list
+    // would be reduced to torrents nothing here can play. The filter itself never leaves a
+    // title empty: when the chosen kind has nothing, it returns everything.
+    const mode = settings.streamMode === "p2p" && !torrentEngineAvailable() ? "both" : settings.streamMode;
+    let all = filterStreamsByMode(result.picker.all, mode);
     if (langFilter && preferredLangs.length > 0) {
       const langFiltered = all.filter((s) => streamMatchesLangs(s, preferredLangs));
       if (langFiltered.length > 0) all = langFiltered;
@@ -233,7 +240,7 @@ export function PlayPicker({
     );
     const primary = primaryCandidates[0] ?? null;
     return { primary, byTier, all };
-  }, [result, langFilter, preferredLangs, cachedOnly, debrids.length, isCached, hostMatch]);
+  }, [result, settings.streamMode, langFilter, preferredLangs, cachedOnly, debrids.length, isCached, hostMatch]);
 
   const anyAddonRanked = useMemo(() => {
     const all = filteredPicker?.all ?? [];

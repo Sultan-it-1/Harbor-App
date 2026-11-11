@@ -7,6 +7,7 @@ import { enhanceAnimeStreams } from "./anitomy";
 import { streamKey } from "./identity";
 import { fetchLibraryStreams, type LibraryQuery } from "./library";
 import { parseStream } from "./parser";
+import { torrentsDisabled } from "@/lib/torrent/stremio-stream";
 import { applyTrust, type Rejection, type TrustOptions } from "./trust";
 import { computeCorpusStats, rankAndPick, scoreStream, type ScoreOptions } from "./scoring";
 import type { ParsedStream, RankedPicker, Stream } from "./types";
@@ -70,12 +71,17 @@ function finalizeWithRescue(
  * The Android app has no torrent engine (and the picker never plays through a remote stream
  * server), so with no debrid service a source that is only an info hash can't play. Those are
  * left out; how many is reported as `p2pOnlyHidden` so the picker can say why it is empty.
+ *
+ * The same goes anywhere once "Turn torrents off completely" is on: with no debrid service
+ * such a source could only play peer-to-peer, which that switch forbids. With a debrid
+ * service it stays, because the service can fetch it and nothing is torrented here.
  */
 function dropP2pOnly(
   parsed: ParsedStream[],
   debrids: DebridStore[],
 ): { playable: ParsedStream[]; hidden: number } {
-  if (!isAndroidApp() || debrids.length > 0) return { playable: parsed, hidden: 0 };
+  if (debrids.length > 0) return { playable: parsed, hidden: 0 };
+  if (!isAndroidApp() && !torrentsDisabled()) return { playable: parsed, hidden: 0 };
   const playable = parsed.filter(
     (s) => !s.infoHash || !!s.url || !!s.ytId || !!s.externalUrl || !!s.nzbUrl,
   );
@@ -192,7 +198,7 @@ export async function runPipeline(
 
   const { playable: parsed, hidden: p2pOnlyHidden } = dropP2pOnly(merged.map(parseStream), input.debrids);
   if (p2pOnlyHidden > 0) {
-    dlog(`[pipeline] ${p2pOnlyHidden} torrent-only stream(s) left out: no debrid service and no torrent engine here`);
+    dlog(`[pipeline] ${p2pOnlyHidden} torrent-only stream(s) left out: no debrid service, and no torrent engine here or torrents are turned off`);
   }
 
   if (input.isAnime) {

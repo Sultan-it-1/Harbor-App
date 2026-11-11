@@ -110,6 +110,8 @@ export const DEFAULT: Settings = {
   stremioServerTranscode: false,
   directTorrentStream: true,
   p2pAutoConsent: false,
+  torrentsDisabled: false,
+  streamMode: "both",
   streamCacheRetentionHours: 24,
   streamCacheDir: "",
   remoteStreamServerUrl: "",

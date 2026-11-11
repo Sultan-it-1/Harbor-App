@@ -72,9 +72,13 @@ export function usePipelineResult({
         addonTransportUrls: (addons ?? []).map((a) => a.transportUrl),
         debridSlugs: debrids.map((d) => d.slug),
         scraperKeys: [],
-        filterMode: filterDisabled ? "off" : strictMode ? "strict" : "balanced",
+        // "Turn torrents off completely" changes what a result holds, so a list saved
+        // before the switch was flipped is not reused.
+        filterMode:
+          (filterDisabled ? "off" : strictMode ? "strict" : "balanced") +
+          (settings.torrentsDisabled ? "+no-torrents" : ""),
       }),
-    [addons, debrids, filterDisabled, strictMode],
+    [addons, debrids, filterDisabled, strictMode, settings.torrentsDisabled],
   );
 
   useEffect(() => {

@@ -1289,6 +1289,16 @@ const misc: Record<string, string> = {
   "1 hour before": "قبل ساعة",
   "Hide the steps": "إخفاء الخطوات",
   "Show the steps": "إظهار الخطوات",
+  "Source mode": "نوع المصادر",
+  "Which kinds of sources the picker lists. When the kind you choose has nothing for a title, everything is shown instead.": "أنواع المصادر التي تظهر في قائمة المصادر. إذا لم يكن للنوع الذي اخترته أي مصدر لعنوان ما، تُعرض كل المصادر بدلاً منه.",
+  "Default. Everything your addons and debrid services return.": "الافتراضي. كل ما تعيده إضافاتك وخدمات debrid.",
+  "Direct and debrid only": "المباشرة و debrid فقط",
+  "Leaves out raw torrents that are not ready on a debrid service. Direct links and sources already cached on your debrid stay.": "يستبعد التورنت الخام غير الجاهز على خدمة debrid. تبقى الروابط المباشرة والمصادر المخزّنة مسبقاً في debrid لديك.",
+  "Torrents only": "التورنت فقط",
+  "Only raw torrents, played peer-to-peer.": "التورنت الخام فقط، ويُشغَّل مباشرة من الأقران (P2P).",
+  "Turn torrents off completely": "إيقاف التورنت تماماً",
+  "Nothing is played peer-to-peer, and sources that could only play that way are hidden. Debrid services and direct links keep working.": "لا يُشغَّل أي شيء مباشرة من الأقران (P2P)، وتُخفى المصادر التي لا تعمل إلا بهذه الطريقة. تبقى خدمات debrid والروابط المباشرة تعمل.",
+  "This app does not play torrents peer-to-peer on this device: without a debrid service they are already hidden. The switch matters where Harbor has a torrent engine, as in the desktop app.": "هذا التطبيق لا يشغّل التورنت مباشرة من الأقران (P2P) على هذا الجهاز: بدون خدمة debrid هي مخفية أصلاً. يفيد هذا الخيار حيث يملك Harbor محرّك تورنت، كما في تطبيق سطح المكتب.",
 };
 
 export default misc;
