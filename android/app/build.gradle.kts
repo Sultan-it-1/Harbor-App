@@ -11,13 +11,6 @@ val media3 = "1.9.0"
 val webDist = rootProject.file("../dist")
 val webAssetsOut = layout.buildDirectory.dir("generated/webAssets")
 
-// The version people see is package.json's, so a local build can't fall behind it (the CI build
-// passes the same value with -PharborVersionName).
-val packageJson = rootProject.layout.projectDirectory.file("../package.json")
-val packageVersion: String =
-    (groovy.json.JsonSlurper().parseText(providers.fileContents(packageJson).asText.get()) as Map<*, *>)["version"] as? String
-        ?: throw GradleException("No \"version\" in ${packageJson.asFile}")
-
 val copyWebAssets by tasks.registering(Sync::class) {
     from(webDist)
     into(webAssetsOut.map { it.dir("www") })
@@ -37,7 +30,7 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = (project.findProperty("harborVersionCode") as String?)?.toInt() ?: 1
-        versionName = (project.findProperty("harborVersionName") as String?) ?: packageVersion
+        versionName = (project.findProperty("harborVersionName") as String?) ?: "1.0.14"
         // Phones are ARM: the x86 copies of the FFmpeg decoder only served emulators (an x86
         // emulator or Chromebook with ARM translation still runs this build).
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
@@ -93,22 +86,10 @@ android {
 
 tasks.named("preBuild") { dependsOn(copyWebAssets) }
 
-// A release build without the release key still works for trying things locally, but it must not
-// pass for a real one: say so whenever such an APK is being made.
-if (android.signingConfigs.findByName("release") == null) {
-    gradle.taskGraph.whenReady {
-        if (hasTask("${project.path}:packageRelease")) {
-            logger.warn(
-                "WARNING: no release key (HARBOR_KEYSTORE_PASSWORD, and HARBOR_KEYSTORE_PATH or keystore/harbor-release.p12): " +
-                    "this release APK is signed with the DEBUG key. Android will refuse to install it over a released copy of Harbor.",
-            )
-        }
-    }
-}
-
 dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.activity:activity-ktx:1.11.0")
+    implementation("androidx.webkit:webkit:1.14.0")
     // The native Home screen's rows (NativeHome).
     implementation("androidx.recyclerview:recyclerview:1.4.0")
     implementation("androidx.media3:media3-exoplayer:$media3")

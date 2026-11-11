@@ -95,18 +95,13 @@ class SubtitleControls(
     private val onStyle: () -> Unit,
     private val getDelayMs: () -> Long,
     private val onDelay: (Long) -> Unit,
-    /** Opens the sync panel (lining the subtitle up with the sound by ear). */
-    private val onSync: (() -> Unit)? = null,
 ) {
     private lateinit var panel: SidePanel
     private var delayWorks = true
-    private var synced = false
 
-    /** [synced]: the subtitle has been synced by ear, and the delay here is that sync's nudge. */
-    fun build(p: SidePanel, delayWorks: Boolean, synced: Boolean = false) {
+    fun build(p: SidePanel, delayWorks: Boolean) {
         panel = p
         this.delayWorks = delayWorks
-        this.synced = synced
         render()
     }
 
@@ -121,47 +116,47 @@ class SubtitleControls(
         // Keep the two tab chips at the top (first child), rebuild everything below them.
         while (p.body.childCount > 1) p.body.removeViewAt(1)
 
-        p.section(Strings.size((style.scale * 100).toInt()))
+        p.section("الحجم · ${(style.scale * 100).toInt()}%")
         p.chips(listOf(
-            Triple(Strings.smaller, false) { style.scale = (style.scale - 0.1f).coerceAtLeast(0.5f); changed() },
-            Triple(Strings.bigger, false) { style.scale = (style.scale + 0.1f).coerceAtMost(2.5f); changed() },
+            Triple("أصغر −", false) { style.scale = (style.scale - 0.1f).coerceAtLeast(0.5f); changed() },
+            Triple("أكبر +", false) { style.scale = (style.scale + 0.1f).coerceAtMost(2.5f); changed() },
             Triple("90%", kotlin.math.abs(style.scale - 0.9f) < 0.05f) { style.scale = 0.9f; changed() },
             Triple("100%", kotlin.math.abs(style.scale - 1f) < 0.05f) { style.scale = 1f; changed() },
             Triple("130%", kotlin.math.abs(style.scale - 1.3f) < 0.05f) { style.scale = 1.3f; changed() },
             Triple("160%", kotlin.math.abs(style.scale - 1.6f) < 0.05f) { style.scale = 1.6f; changed() },
         ))
 
-        p.section(Strings.background)
-        p.chips(listOf("shadow" to Strings.shadow, "outline" to Strings.outline, "box" to Strings.box, "none" to Strings.none).map { (k, n) ->
+        p.section("الخلفية")
+        p.chips(listOf("shadow" to "ظل", "outline" to "إطار", "box" to "خلفية", "none" to "بدون").map { (k, n) ->
             Triple(n, style.background == k) { style.background = k; changed() }
         })
         if (style.background == "box") {
-            p.section(Strings.boxOpacity((style.boxOpacity * 100).toInt()))
+            p.section("شفافية الخلفية · ${(style.boxOpacity * 100).toInt()}%")
             p.chips(listOf(0.3f, 0.5f, 0.7f, 0.9f).map { o ->
                 Triple("${(o * 100).toInt()}%", kotlin.math.abs(style.boxOpacity - o) < 0.05f) { style.boxOpacity = o; changed() }
             })
         }
 
-        p.section(Strings.color)
+        p.section("اللون")
         p.chips(listOf(
-            Color.WHITE to Strings.white, Color.parseColor("#FFE14D") to Strings.yellow,
-            Color.parseColor("#7FE7FF") to Strings.cyan, Color.parseColor("#8CFF8C") to Strings.green,
+            Color.WHITE to "أبيض", Color.parseColor("#FFE14D") to "أصفر",
+            Color.parseColor("#7FE7FF") to "سماوي", Color.parseColor("#8CFF8C") to "أخضر",
         ).map { (c, n) -> Triple(n, style.color == c) { style.color = c; changed() } })
 
-        p.section(Strings.position)
+        p.section("المكان")
         p.chips(listOf(
-            Triple(Strings.lower, false) { style.bottom = (style.bottom - 0.03f).coerceAtLeast(0f); changed() },
-            Triple(Strings.higher, false) { style.bottom = (style.bottom + 0.03f).coerceAtMost(0.45f); changed() },
-            Triple(Strings.defaultValue, kotlin.math.abs(style.bottom - 0.08f) < 0.01f) { style.bottom = 0.08f; changed() },
+            Triple("أنزل ↓", false) { style.bottom = (style.bottom - 0.03f).coerceAtLeast(0f); changed() },
+            Triple("أرفع ↑", false) { style.bottom = (style.bottom + 0.03f).coerceAtMost(0.45f); changed() },
+            Triple("الافتراضي", kotlin.math.abs(style.bottom - 0.08f) < 0.01f) { style.bottom = 0.08f; changed() },
         ))
 
-        p.section(Strings.font)
-        p.chips(listOf(Triple(Strings.bold, style.bold) { style.bold = !style.bold; changed() }))
+        p.section("الخط")
+        p.chips(listOf(Triple("عريض", style.bold) { style.bold = !style.bold; changed() }))
 
         val d = getDelayMs()
-        p.section(Strings.delay((if (d > 0) "+" else "") + String.format(java.util.Locale.US, "%.1f", d / 1000.0)))
+        p.section("التأخير · " + (if (d > 0) "+" else "") + String.format(java.util.Locale.US, "%.1f", d / 1000.0) + " ث")
         if (!delayWorks) {
-            p.note(Strings.delayNeedsAddonSubtitle)
+            p.note("التأخير يشتغل على ترجمات الإضافات. اختر ترجمة من الإضافات أول.")
         } else {
             p.chips(listOf(
                 Triple("−1", false) { onDelay(getDelayMs() - 1000); render() },
@@ -170,13 +165,10 @@ class SubtitleControls(
                 Triple("+0.1", false) { onDelay(getDelayMs() + 100); render() },
                 Triple("+1", false) { onDelay(getDelayMs() + 1000); render() },
             ))
-            p.note(if (synced) Strings.delayHint + "\n" + Strings.delayOnSyncedSubtitle else Strings.delayHint)
-            // For a subtitle that one delay can't fix (it starts right and drifts, or the delay
-            // is hard to find by trial and error).
-            onSync?.let { open -> p.action(Strings.syncOpen, R.drawable.ic_audio_lines) { open() } }
+            p.note("موجب = الترجمة تتأخر، سالب = تطلع أبكر.")
         }
 
-        p.action(Strings.resetLook) {
+        p.action("رجّع المظهر الافتراضي") {
             val def = SubStyle()
             style.scale = def.scale; style.background = def.background; style.color = def.color
             style.bottom = def.bottom; style.bold = def.bold; style.boxOpacity = def.boxOpacity

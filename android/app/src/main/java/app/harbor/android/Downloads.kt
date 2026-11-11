@@ -94,6 +94,15 @@ class Downloads private constructor(private val ctx: Context) {
             val j = JSONObject(json)
             val id = j.getString("id")
             if (!validId(id)) return out.put("ok", false).put("error", "invalid id").toString()
+            synchronized(lock) {
+                val old = tasks[id]
+                // Started twice (a double tap, or delete + download again at once): one transfer per
+                // id. While the old one runs, this start is a no-op; its worker would otherwise
+                // delete the folder (with the new .part) when it ends.
+                if (old != null && (old.worker != null || old.state == RUNNING || old.state == QUEUED || old.state == WAITING)) {
+                    return out.put("ok", true).put("already", true).toString()
+                }
+            }
             val dir = dirFor(id) ?: return out.put("ok", false).put("error", "storage unavailable").toString()
             dir.mkdirs()
             val fileName = safeFileName(j.optString("fileName").ifBlank { "video.mp4" })
@@ -104,15 +113,7 @@ class Downloads private constructor(private val ctx: Context) {
             }
             val title = listOf(j.optString("title"), j.optString("description")).filter { it.isNotBlank() }.joinToString(" · ")
             val t = Task(id, j.getString("url"), headers, ua, fileName, title.ifBlank { "Harbor" }, QUEUED, System.currentTimeMillis())
-            // The check and the entry in one step, so two starts of one id can't both get through.
             synchronized(lock) {
-                val old = tasks[id]
-                // Started twice (a double tap, or delete + download again at once): one transfer per
-                // id. While the old one runs, this start is a no-op; its worker would otherwise
-                // delete the folder (with the new .part) when it ends.
-                if (old != null && (old.worker != null || old.state == RUNNING || old.state == QUEUED || old.state == WAITING)) {
-                    return out.put("ok", true).put("already", true).toString()
-                }
                 tasks[id] = t
                 persist(t)
             }
@@ -310,10 +311,10 @@ class Downloads private constructor(private val ctx: Context) {
         }
         val note = when {
             active.isEmpty() || running > 0 -> null
-            active.any { it.state == WAITING && it.waitingFor == WAIT_NETWORK } -> Strings.waitingForInternet
-            active.any { it.state == WAITING && it.waitingFor == WAIT_WIFI } -> Strings.waitingForWifi
-            active.any { it.state == WAITING } -> Strings.retryingSoon
-            else -> Strings.queued
+            active.any { it.state == WAITING && it.waitingFor == WAIT_NETWORK } -> "بانتظار الإنترنت"
+            active.any { it.state == WAITING && it.waitingFor == WAIT_WIFI } -> "بانتظار الواي فاي"
+            active.any { it.state == WAITING } -> "يعيد المحاولة بعد شوي…"
+            else -> "في الانتظار"
         }
         Summary(active.size, running, got, if (unknown) 0 else total, note)
     }
@@ -838,15 +839,14 @@ class Downloads private constructor(private val ctx: Context) {
 
         fun get(ctx: Context): Downloads {
             instance?.let { return it }
+            val created: Downloads
             synchronized(Downloads::class.java) {
                 instance?.let { return it }
-                // Handed out only once the saved downloads are loaded: a caller on another thread
-                // must not get it while its list is still empty.
-                val created = Downloads(ctx.applicationContext)
-                created.restore()
+                created = Downloads(ctx.applicationContext)
                 instance = created
-                return created
             }
+            created.restore()
+            return created
         }
     }
 }

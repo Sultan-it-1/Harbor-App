@@ -78,7 +78,7 @@ class NativeFetch(
             var body = if (req.has("body") && !req.isNull("body")) req.getString("body") else null
             var currentMethod = method
             // Credentials are only sent to the host they were meant for (like fetch()).
-            val firstHost = url.host
+            val firstHost = url.host.lowercase()
 
             var conn: HttpURLConnection
             var redirects = 0
@@ -91,10 +91,11 @@ class NativeFetch(
                 conn.readTimeout = timeout
                 conn.requestMethod = currentMethod
                 conn.setRequestProperty("User-Agent", userAgent)
+                val sameHost = url.host.lowercase() == firstHost
                 headers?.keys()?.forEach { k ->
                     // HttpURLConnection handles gzip itself only when it set the header.
                     if (k.equals("accept-encoding", true) || k.equals("host", true) || k.equals("content-length", true)) return@forEach
-                    if (!RedirectGuard.maySend(k, firstHost, url.host)) return@forEach
+                    if (!sameHost && (k.equals("authorization", true) || k.equals("cookie", true) || k.equals("proxy-authorization", true))) return@forEach
                     conn.setRequestProperty(k, headers.getString(k))
                 }
                 if (body != null && currentMethod != "GET" && currentMethod != "HEAD") {
