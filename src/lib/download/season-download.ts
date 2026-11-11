@@ -1,20 +1,20 @@
 // "Download season": for every episode, run the same stream query + ranking the source
 // picker uses, take the best stream that can actually be saved, resolve it (debrid /
-// direct) and queue the download. Runs one episode at a time, and keeps running when you
-// leave the page (or, on Android, the app).
+// direct), check that its link isn't a placeholder and queue the download (best-source.ts).
+// Runs one episode at a time, and keeps running when you leave the page (or, on Android,
+// the app).
 import { useSyncExternalStore } from "react";
 import type { Meta } from "@/lib/cinemeta";
 import type { DebridStore } from "@/lib/debrid/types";
 import type { Settings } from "@/lib/settings";
 import { runPipeline } from "@/lib/streams/pipeline";
-import { resolveStream } from "@/lib/streams/resolve";
 import { buildStreamIds } from "@/lib/streams/stream-ids";
-import type { ScoredStream } from "@/lib/streams/types";
 import { tmdbImdbId } from "@/lib/providers/tmdb";
 import type { PlayEpisode } from "@/lib/view";
 import { loadPickerAddons } from "@/views/play-picker/use-addons";
 import { buildPipelineInput } from "@/views/play-picker/use-pipeline-result";
-import { activeDownloadFor, beginBackgroundJob, endBackgroundJob, enqueueDownload } from "./downloads-store";
+import { queueBestDownload } from "./best-source";
+import { activeDownloadFor, beginBackgroundJob, endBackgroundJob } from "./downloads-store";
 import { isAndroidApp, nativeNetworkLooksDown, subscribeNativeNetwork } from "@/lib/android";
 import { readActiveStremioAuthKey } from "@/lib/auth";
 import { buildDebridClients } from "@/lib/debrid/registry";
@@ -29,21 +29,6 @@ export type SeasonDownloadProgress = {
   current: PlayEpisode | null;
   finished: boolean;
 };
-
-/** The user's debrid services that already hold this stream (cached there, or in their library). */
-function heldBy(s: ScoredStream, debrids: DebridStore[]): DebridStore[] {
-  return debrids.filter((d) => s.cached?.[d.slug] === true || s.inLibrary?.[d.slug] === true);
-}
-
-/**
- * Streams worth trying for a download, best first: cached on a debrid or a direct link. An
- * uncached torrent is never tried: it can't be saved right now, and asking a debrid for it
- * leaves the torrent queued in the user's account (TorBox, AllDebrid).
- */
-function downloadCandidates(all: ScoredStream[], debrids: DebridStore[]): ScoredStream[] {
-  const direct = (s: ScoredStream) => !!s.url && s.url !== "#" && !s.infoHash;
-  return all.filter((s) => heldBy(s, debrids).length > 0 || direct(s)).slice(0, 4);
-}
 
 export async function downloadSeason(opts: {
   meta: Meta;
@@ -103,26 +88,9 @@ export async function downloadSeason(opts: {
           }),
           signal,
         );
-        for (const s of downloadCandidates(result.picker.all, debrids)) {
-          if (signal.aborted) break;
-          // Only the services that already have it, and not as a "start this torrent" request.
-          const r = await resolveStream(s, heldBy(s, debrids), signal, false);
-          if (!r.ok) continue;
-          const label =
-            [s.resolution, s.source].filter(Boolean).join(" ") || s.parsedTitle || s.title || s.name || s.addonName || null;
-          await enqueueDownload({
-            meta,
-            episode: ep,
-            streamLabel: label,
-            url: r.data.url,
-            rawUrl: r.data.url,
-            headers: r.data.headers,
-            subtitles: r.data.subtitles,
-            source: s,
-          });
-          ok = true;
-          break;
-        }
+        // The best stream that is really ready (cached or direct, and not a placeholder clip).
+        const queued = await queueBestDownload({ meta, episode: ep, streams: result.picker.all, debrids, signal });
+        ok = queued.ok;
       }
     } catch (e) {
       if (signal.aborted) break;

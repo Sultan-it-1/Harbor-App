@@ -1,6 +1,6 @@
 import { isPhoneLayout } from "@/lib/platform";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import { resolveAddonLogo } from "@/components/addon-logo";
 import { torrentEngineStatus } from "@/lib/torrent/local-engine";
 import { useAuth } from "@/lib/auth";
@@ -10,6 +10,7 @@ import { useTogether } from "@/lib/together/provider";
 import { buildMatchScores, matchBadge, MATCH_CLOSE } from "@/lib/together/source-match";
 import { HostSourceBanner } from "@/components/host-source-banner";
 import { consumeRecentStubEvent } from "@/lib/dead-streams";
+import { queueBestDownload, type BestDownloadResult } from "@/lib/download/best-source";
 import {
   findPreferredSourceMatch,
   readPlayback,
@@ -19,6 +20,7 @@ import {
 } from "@/lib/playback-history";
 import { useSettings } from "@/lib/settings";
 import { filterStreamsByMode } from "@/lib/streams/mode";
+import { applyTrust } from "@/lib/streams/trust";
 import { torrentEngineAvailable } from "@/lib/torrent/stremio-stream";
 import type { ScoredStream, Tier } from "@/lib/streams/types";
 import { isAddonRanked } from "@/lib/streams/addon-detect";
@@ -54,7 +56,7 @@ import { useAutoFire } from "./play-picker/use-auto-fire";
 import { useRoomInvite } from "./play-picker/use-room-invite";
 import { useAddons } from "./play-picker/use-addons";
 import { useImdbId } from "./play-picker/use-imdb-id";
-import { usePipelineResult } from "./play-picker/use-pipeline-result";
+import { buildPipelineInput, usePipelineResult } from "./play-picker/use-pipeline-result";
 import { useStreamIds } from "./play-picker/use-stream-ids";
 import { t } from "@/lib/i18n/translate";
 import { useT } from "@/lib/i18n";
@@ -118,6 +120,13 @@ export function PlayPicker({
   const [selectedTier, setSelectedTier] = useState<Tier | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [downloadConfirm, setDownloadConfirm] = useState<{ label: string | null } | null>(null);
+  // A download was queued (a source picked by hand, or "Download the best source"): the
+  // "Saving to Downloads" step, then back to the title.
+  const onDownloadStarted = useCallback((label?: string | null) => setDownloadConfirm({ label: label ?? null }), []);
+  // "Download the best source" at work (see downloadBest below).
+  const [bestBusy, setBestBusy] = useState(false);
+  const bestAcRef = useRef<AbortController | null>(null);
+  useEffect(() => () => bestAcRef.current?.abort(), []);
   const [strictMode, setStrictMode] = useState(settings.streamFilterLevel === "strict");
   const [forceShowAll, setForceShowAll] = useState(false);
   const filterDisabled = settings.streamFilterLevel === "off" || forceShowAll || isDownload;
@@ -371,7 +380,7 @@ export function PlayPicker({
     claimHost,
     openPlayer,
     intent,
-    onDownloadStarted: (label) => setDownloadConfirm({ label: label ?? null }),
+    onDownloadStarted,
     autoActive,
     autoAttemptIdx,
     autoCandidatesLength: autoCandidates.length,
@@ -386,6 +395,8 @@ export function PlayPicker({
   const playManually = useCallback(
     (s: ScoredStream) => {
       setAutoCancelled(true);
+      // A source picked by hand wins over a "best source" search still going on.
+      bestAcRef.current?.abort();
       onPlay(s);
     },
     [onPlay],
@@ -471,6 +482,66 @@ export function PlayPicker({
   const noResults =
     addonsSettled && !!streamIds && streamIds.length > 0 && allCount === 0 && debrids.length > 0;
   const terminalEmpty = noStreamIds || noDebrids || noResults;
+
+  // Download mode: "Download the best source". Harbor goes through the ranked list itself and
+  // saves the first source that is really ready (cached or direct, and not a placeholder
+  // clip), the way playback finds a working source on its own. It waits for the list: the
+  // best source may come from an addon that hasn't answered yet.
+  const bestCount = filteredPicker?.all.length ?? 0;
+  const bestShown = isDownload && !(addonsSettled && bestCount === 0);
+  const bestReady = isDownload && addonsSettled && bestCount > 0;
+  // Its failure is said on the button itself: the usual error card sits under the whole list,
+  // far below where the tap was.
+  const bestFailText = t("None of the sources is ready to download right now. Try again later or pick one yourself.");
+  const bestFailed = bestShown && !bestBusy && resolveError === bestFailText;
+  const downloadBest = async () => {
+    if (!bestReady || !filteredPicker || bestAcRef.current) return;
+    // In download mode the list is unfiltered, so that anything can be picked by hand. What
+    // Harbor picks by itself goes through the filter the user's level asks for (no trailers,
+    // cam rips, wrong episodes…), as playback's own pick and "Download season" do.
+    let streams = filteredPicker.all;
+    if (streamIds && addons) {
+      const { trust } = buildPipelineInput({
+        meta,
+        episode,
+        imdbId,
+        streamIds,
+        addons,
+        debrids,
+        settings,
+        strictMode: settings.streamFilterLevel === "strict",
+        filterDisabled: settings.streamFilterLevel === "off",
+      });
+      const kept = new Set<unknown>(applyTrust(streams, trust).keep);
+      streams = streams.filter((s) => kept.has(s));
+    }
+    const ac = new AbortController();
+    bestAcRef.current = ac;
+    setResolveError(null);
+    setBestBusy(true);
+    let queued: BestDownloadResult | null = null;
+    try {
+      queued = await queueBestDownload({
+        meta,
+        episode,
+        streams,
+        debrids,
+        signal: ac.signal,
+        onNotReady: (s) => setFailedStreams((prev) => new Set(prev).add(s)),
+      });
+    } catch (e) {
+      console.warn("[picker] download the best source failed", e);
+    }
+    if (bestAcRef.current === ac) bestAcRef.current = null;
+    setBestBusy(false);
+    // Queued: exactly what a pick by hand does next.
+    if (queued?.ok) return onDownloadStarted(queued.label);
+    // Stopped (a source was picked by hand meanwhile, or the picker was left): nothing to say.
+    if (ac.signal.aborted) return;
+    setResolveError(bestFailText);
+  };
+  const downloadBestRef = useRef(downloadBest);
+  downloadBestRef.current = downloadBest;
   const [stubBanner, setStubBanner] = useState<string | null>(null);
   useEffect(() => {
     const ev = consumeRecentStubEvent(8000);
@@ -580,15 +651,34 @@ export function PlayPicker({
     [stremioNative, loading, currentPick, meta, episode, debrids, resolving, queuedHash, inSession, previousMatch, matchFor, settings.pickerShowFilename, settings.showQualityBadge, addonLogoMap]);
   const pickerRows = useMemo<NativeRowInput[]>(() => {
     const out: NativeRowInput[] = [];
-    const card = (key: string, c: { title: string; sub?: string | null; kicker?: string; tone?: "plain" | "danger" | "accent"; busy?: boolean; icon?: string }) =>
-      out.push({ key, title: "", kind: "action", metas: [], cards: [{ title: c.title, sub: c.sub ?? null, kicker: c.kicker, tone: c.tone ?? "plain", busy: c.busy, icon: c.icon }] });
+    const card = (key: string, c: { title: string; sub?: string | null; kicker?: string; tone?: "plain" | "danger" | "accent"; busy?: boolean; icon?: string }, onOpen?: () => void) =>
+      out.push({ key, title: "", kind: "action", metas: [], cards: [{ title: c.title, sub: c.sub ?? null, kicker: c.kicker, tone: c.tone ?? "plain", busy: c.busy, icon: c.icon }], onOpen });
     const block = (key: string, pk: Record<string, unknown>, onPk?: (what: string, i: number) => void) =>
       out.push({ key, title: "", kind: "pk", metas: [], pk, onPk });
     if (hostSourceForMedia) {
       const h = hostCard(hostSourceForMedia);
       card("host", { kicker: h.kicker, title: h.title, sub: h.sub, tone: "accent", icon: "crown" });
     }
-    if (isDownload) card("download", { title: tt("Choose a source to save offline. You can track progress on the Downloads page."), icon: "download" });
+    if (bestShown) {
+      // A tap on the card does it (the row's onOpen). Accent while it can be tapped, plain
+      // while the list is still loading (a tap then does nothing), red with the reason when
+      // nothing could be saved (a tap tries again).
+      card(
+        "download",
+        {
+          title: tt("Download the best source"),
+          sub: bestBusy
+            ? tt("Looking for a source that is ready…")
+            : bestFailed
+              ? bestFailText
+              : tt("Harbor checks the sources in order and saves the first one that is ready. Or choose one below."),
+          icon: "download",
+          tone: bestFailed ? "danger" : bestReady ? "accent" : "plain",
+          busy: bestBusy,
+        },
+        () => void downloadBestRef.current(),
+      );
+    }
     if (stubBanner) card("stub", { title: stubBanner, icon: "alert" });
     if (!addonsSettled && (!filteredPicker || filteredPicker.all.length === 0)) block("pk-loader", loaderBlock(meta));
     for (const p of ladderPanels({
@@ -719,10 +809,10 @@ export function PlayPicker({
         }
       }
     }
-    if (resolveError) card("error", { title: resolveError, tone: engineWarming ? "plain" : "danger", busy: engineWarming });
+    if (resolveError && !bestFailed) card("error", { title: resolveError, tone: engineWarming ? "plain" : "danger", busy: engineWarming });
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tt, isDownload, stubBanner, addonsSettled, filteredPicker, src.visibleStreams, failedStreams, settings.fullStreamDescription, settings.showQualityBadge, settings.pickerShowFilename, pipelineDone, listed.length, waiting.length, addons, addonCount, resolveError, engineWarming, toData, stremioNative, hostSourceForMedia, result, streamIds, debrids, allCount, rawCount, strictMode, forceShowAll, loading, diagOpen, pick, currentPick, populatedTiers, selectedTier, uncachedHiddenCount, cachedOnly, preferredLangs, langHiddenCount, langFilter, isAnimeRequest, drawerOpen, usedAddons, drawerAddon, displayStreams, drawerOptions, drawerShown, hostMatch, resolving, meta, episode]);
+  }, [tt, isDownload, bestShown, bestReady, bestBusy, bestFailed, bestFailText, stubBanner, addonsSettled, filteredPicker, src.visibleStreams, failedStreams, settings.fullStreamDescription, settings.showQualityBadge, settings.pickerShowFilename, pipelineDone, listed.length, waiting.length, addons, addonCount, resolveError, engineWarming, toData, stremioNative, hostSourceForMedia, result, streamIds, debrids, allCount, rawCount, strictMode, forceShowAll, loading, diagOpen, pick, currentPick, populatedTiers, selectedTier, uncachedHiddenCount, cachedOnly, preferredLangs, langHiddenCount, langFilter, isAnimeRequest, drawerOpen, usedAddons, drawerAddon, displayStreams, drawerOptions, drawerShown, hostMatch, resolving, meta, episode]);
 
   // The full-screen steps, in the page's order, and what their buttons (and Back) do.
   const stage: { model: Record<string, unknown>; onTap: (what: string) => void; back: (() => void) | null } | null = noSourcesConfigured
@@ -919,10 +1009,34 @@ export function PlayPicker({
 
         {hostSourceForMedia && <HostSourceBanner source={hostSourceForMedia} />}
 
-        {isDownload && (
-          <div className="rounded-2xl border border-edge-soft bg-elevated/60 px-5 py-3.5 text-[13.5px] text-ink-muted">
-            {t("Choose a source to save offline. You can track progress on the Downloads page.")}
-          </div>
+        {bestShown && (
+          <button
+            type="button"
+            onClick={() => void downloadBest()}
+            disabled={!bestReady || bestBusy}
+            aria-busy={bestBusy}
+            className={`flex w-full items-center gap-4 rounded-2xl border px-5 py-3.5 text-start transition-colors disabled:cursor-default disabled:opacity-60 ${
+              bestFailed ? "border-danger/30 bg-danger/15" : "border-accent/40 bg-accent/10 enabled:hover:bg-accent/15"
+            }`}
+          >
+            <span
+              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
+                bestFailed ? "bg-danger/20 text-danger" : "bg-accent/20 text-accent"
+              }`}
+            >
+              {bestBusy ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} strokeWidth={2.2} />}
+            </span>
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-[15px] font-semibold text-ink">{t("Download the best source")}</span>
+              <span className={`text-[12.5px] leading-snug ${bestFailed ? "text-ink" : "text-ink-muted"}`}>
+                {bestBusy
+                  ? t("Looking for a source that is ready…")
+                  : bestFailed
+                    ? bestFailText
+                    : t("Harbor checks the sources in order and saves the first one that is ready. Or choose one below.")}
+              </span>
+            </span>
+          </button>
         )}
 
         {stubBanner && (
@@ -1048,7 +1162,7 @@ export function PlayPicker({
             <span>{resolveError}</span>
           </div>
         )}
-        {resolveError && !engineWarming && (
+        {resolveError && !engineWarming && !bestFailed && (
           <div className="rounded-2xl border border-danger/30 bg-danger/15 px-5 py-4 text-[13.5px] text-ink">
             {resolveError}
           </div>

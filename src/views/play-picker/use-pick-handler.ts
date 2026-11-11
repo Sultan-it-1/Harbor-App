@@ -6,7 +6,7 @@ import { markStreamDead, recordStubEvent } from "@/lib/dead-streams";
 
 const PREFLIGHT_STUB_TTL_MS = 15 * 60 * 1000;
 import { engineP2pEligible } from "@/lib/torrent/stremio-stream";
-import { preflightCheck } from "@/lib/streams/preflight";
+import { checkDownloadLink, preflightCheck } from "@/lib/streams/preflight";
 import { resolveStream } from "@/lib/streams/resolve";
 import { registerStreamProxy } from "@/lib/stream-proxy";
 import { isAndroidApp } from "@/lib/android";
@@ -15,7 +15,9 @@ import type { PlayInvite } from "@/lib/together/protocol";
 import { buildPlayInvite } from "@/lib/together/build-invite";
 import { type PlayEpisode, type PlayerSrc } from "@/lib/view";
 import { openInAppBrowser, openUrl } from "@/lib/window";
-import { enqueueDownload } from "@/lib/download/downloads-store";
+import { downloadMinBytes, enqueueDownload } from "@/lib/download/downloads-store";
+import { downloadLabel } from "@/lib/download/best-source";
+import { t } from "@/lib/i18n/translate";
 import { formatStreamQuality, humanError, isDebridFailure } from "./picker-utils";
 
 export function usePickHandler({
@@ -93,6 +95,7 @@ export function usePickHandler({
     resolveAcRef.current?.abort();
     resolveAcRef.current = ac;
     let opened = false;
+    const isDownload = intent === "download";
     try {
       const r = await resolveStream(stream, debrids, ac.signal, userCommitted, forceP2p);
       if (ac.signal.aborted) return;
@@ -137,8 +140,21 @@ export function usePickHandler({
           return;
         }
       }
-      const preflight =
-        r.via === "p2p" || r.via === "direct"
+      // Playback trusts a link that came straight from an addon. A download of a film or an
+      // episode doesn't: an addon's debrid link ("[RD+] …") answers with a short "not ready"
+      // clip when the file isn't there yet, a real video file that used to be saved and
+      // shown as finished. So a download always asks for the size, with the link's own
+      // headers and more time (a debrid "resolve" link can take several seconds). When the
+      // size can't be read, the download may still start: the app's downloader refuses a
+      // placeholder itself (minBytes).
+      const sizeChecked = isDownload && r.via !== "p2p" && downloadMinBytes(meta, episode) > 0;
+      const preflight = sizeChecked
+        ? await checkDownloadLink(playUrl, nativeHeaders, ac.signal).then((c) =>
+            c.verdict === "placeholder"
+              ? ({ ok: false, reason: "stub", sizeBytes: c.sizeBytes } as const)
+              : ({ ok: true } as const),
+          )
+        : r.via === "p2p" || r.via === "direct"
           ? ({ ok: true } as const)
           : await preflightCheck(playUrl, ac.signal);
       if (ac.signal.aborted) return;
@@ -158,18 +174,16 @@ export function usePickHandler({
         const willRetry = autoActive && autoAttemptIdx + 1 < autoCandidatesLength;
         advanceAuto();
         if (!willRetry && !autoActive) {
-          setResolveError("This source isn't ready on your debrid yet. Try it again in a moment or pick another.");
+          setResolveError(
+            isDownload
+              ? t("This source isn't ready: it returned a short placeholder instead of the video. Pick another source.")
+              : "This source isn't ready on your debrid yet. Try it again in a moment or pick another.",
+          );
         }
         return;
       }
-      if (intent === "download") {
-        const label =
-          [stream.resolution, stream.source].filter(Boolean).join(" ") ||
-          stream.parsedTitle ||
-          stream.title ||
-          stream.name ||
-          stream.addonName ||
-          null;
+      if (isDownload) {
+        const label = downloadLabel(stream);
         void enqueueDownload({
           meta,
           episode,

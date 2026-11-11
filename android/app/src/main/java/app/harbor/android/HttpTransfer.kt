@@ -20,6 +20,12 @@ class HttpTransfer(
     private val userAgent: String,
     private val part: File,
     private val listener: Listener,
+    /**
+     * A whole file smaller than this is refused (0 = any size). A film or an episode is never a
+     * few hundred kilobytes: that is the short "not ready" clip a debrid link answers with. It is
+     * a real video file, so the "is this a video?" checks below let it through.
+     */
+    private val minBytes: Long = 0,
 ) {
     interface Listener {
         /** Full size once the server says it (-1 when it doesn't). */
@@ -35,7 +41,7 @@ class HttpTransfer(
         fun freeSpace(): Long = Long.MAX_VALUE
     }
 
-    enum class Problem { NETWORK, SERVER, REFUSED, SPACE, NOT_MEDIA, OTHER }
+    enum class Problem { NETWORK, SERVER, REFUSED, SPACE, NOT_MEDIA, TOO_SMALL, OTHER }
 
     sealed class Result {
         object Done : Result()
@@ -44,7 +50,8 @@ class HttpTransfer(
         /** Worth another go: connection cut, timeout, server busy. */
         data class Retry(val problem: Problem, val detail: String, val madeProgress: Boolean) : Result()
 
-        /** Retrying right away won't help: link refused/expired, no space, bad response. */
+        /** Retrying right away won't help: link refused/expired, no space, bad response, a
+         *  placeholder instead of the video. */
         data class Fail(val problem: Problem, val detail: String, val httpCode: Int = 0) : Result()
     }
 
@@ -60,6 +67,20 @@ class HttpTransfer(
 
     /** Next to the .part: the host and ETag/Last-Modified of the file it holds (for If-Range). */
     private val validatorFile = File(part.path + ".validator")
+
+    /**
+     * The whole file is [size] bytes, less than [minBytes]: a placeholder, refused. What is on disk
+     * of it goes too (a later try must not carry on from a piece of it). A .part bigger than that
+     * is not the placeholder: it is part of the real file, from a link that worked earlier, and
+     * stays for when the source is ready again.
+     */
+    private fun tooSmall(size: Long): Result {
+        if (part.length() < minBytes) {
+            part.delete()
+            validatorFile.delete()
+        }
+        return Result.Fail(Problem.TOO_SMALL, "$size bytes")
+    }
 
     private fun savedValidator(host: String): String? = try {
         val lines = validatorFile.readLines()
@@ -128,6 +149,9 @@ class HttpTransfer(
                 // on the server changed. Check the size it reports.
                 val total = parseContentRange(c.getHeaderField("Content-Range"))?.total ?: -1
                 c.disconnect()
+                // The file there is too small to be the video (all of it here already, or it
+                // took the place of the one this .part was started from): a placeholder.
+                if (total in 1 until minBytes) return tooSmall(total)
                 if (total == offset) {
                     listener.onTotal(total)
                     listener.onProgress(offset)
@@ -169,18 +193,25 @@ class HttpTransfer(
                 c.disconnect()
                 return Result.Fail(Problem.NOT_MEDIA, why, code)
             }
+            val length = c.getHeaderFieldLong("Content-Length", -1L)
+            val total = when {
+                range != null && range.total > 0 -> range.total
+                length >= 0 -> offset + length
+                else -> -1L
+            }
+            // The server says how big the whole file is, and it is too small to be the video:
+            // refused before a byte is written (and before anything kept from an earlier,
+            // real file is touched).
+            if (total in 1 until minBytes) {
+                c.disconnect()
+                return tooSmall(total)
+            }
             if (!resume) {
                 val v = c.getHeaderField("ETag")?.takeIf { !it.startsWith("W/") } ?: c.getHeaderField("Last-Modified")
                 try {
                     if (v != null) validatorFile.writeText(target.host + "\n" + v) else validatorFile.delete()
                 } catch (_: Exception) {
                 }
-            }
-            val length = c.getHeaderFieldLong("Content-Length", -1L)
-            val total = when {
-                range != null && range.total > 0 -> range.total
-                length >= 0 -> offset + length
-                else -> -1L
             }
             if (total > 0 && listener.freeSpace() < total - offset + SPACE_MARGIN) {
                 c.disconnect()
@@ -232,6 +263,8 @@ class HttpTransfer(
                 conn = null
             }
             if (total > 0 && got < total) return Result.Retry(Problem.NETWORK, "connection closed early", got > startBytes)
+            // The server never said the size, and what came is too small to be the video.
+            if (got < minBytes) return tooSmall(got)
             validatorFile.delete()
             return Result.Done
         }

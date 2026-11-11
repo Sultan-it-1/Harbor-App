@@ -275,6 +275,13 @@ object Strings {
     val downloadFinished get() = t("Download finished", "اكتمل التحميل")
     val downloadFailed get() = t("Download failed", "تعذّر التحميل")
     fun downloadFailedHint(title: String) = t("$title · Open Downloads and tap Retry", "$title · افتح التحميلات واضغط إعادة المحاولة")
+    /** Why a download ended as failed when the source answered with its short "not ready" clip
+     *  (HttpTransfer.Problem.TOO_SMALL); the Downloads page says the same from the code "placeholder". */
+    val downloadPlaceholder get() = t(
+        "This source wasn't ready: it sent a short placeholder, not the video. Delete it and pick another source.",
+        "هذا المصدر لم يكن جاهزاً: أرسل مقطعاً قصيراً بدل الفيديو. احذفه واختر مصدراً آخر.",
+    )
+    fun downloadPlaceholderHint(title: String) = t("$title · The source wasn't ready. Pick another source", "$title · المصدر لم يكن جاهزاً. اختر مصدراً آخر")
 
     // ---- the app's own window ----
     // These can show before the page has ever run (a first launch, a WebView too old to draw the

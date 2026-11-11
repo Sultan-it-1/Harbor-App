@@ -1361,7 +1361,7 @@ class NativeHome(
         private val iconView = ImageView(ctx)
         private val kicker = label("", 11f, bold = true, lines = 1)
         private val title = label("", 15f, bold = true, lines = 1)
-        private val sub = label("", 12.5f, lines = 2)
+        private val sub = label("", 12.5f, lines = 3)
         private val button = LinearLayout(ctx)
         private val buttonIcon = ImageView(ctx)
         private val buttonText = label("", 15f, bold = true, lines = 1)
@@ -1444,6 +1444,9 @@ class NativeHome(
             kicker.setTextColor(if (tone == "danger") colors.ink else colors.accent)
             title.text = c.title
             title.visibility = if (c.title.isBlank()) View.GONE else View.VISIBLE
+            // A card that is only a message (an error, a notice: no label above it, no button)
+            // shows it whole; cut to one line, "This source isn't ready: it re…" told nothing.
+            title.maxLines = if (c.kicker.isNullOrBlank() && c.button == null) 4 else 1
             title.setTextColor(colors.ink)
             title.setTypeface(null, if (c.kicker.isNullOrBlank() && tone == "plain") Typeface.NORMAL else Typeface.BOLD)
             title.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (c.kicker.isNullOrBlank() && tone == "plain") 14f else 15f)

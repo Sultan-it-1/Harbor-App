@@ -4,6 +4,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useSyncExternalStore } from "react";
 import type { Meta } from "@/lib/cinemeta";
 import type { PlayEpisode } from "@/lib/view";
+import { MIN_REAL_SIZE_BYTES } from "@/lib/streams/preflight";
 import { buildDefaultFilename } from "./filename";
 import { startDownload, type DownloadHandle } from "./video-download";
 import {
@@ -57,7 +58,35 @@ export type DownloadItem = {
   source?: unknown;
   /** A fresh link was already fetched once on its own for the current failure. */
   autoRelinked?: boolean;
+  /** The smallest size its file can really have (downloadMinBytes); 0 = any size. Absent on
+   *  downloads from before this was kept: those count as films and episodes. */
+  minBytes?: number;
 };
+
+/**
+ * A film or an episode is never smaller than a few megabytes: a file under that is the short
+ * "not ready" clip a debrid link answers with, not the video. Other kinds of addon content
+ * (a short clip, a radio piece) can be that small, so they get no minimum.
+ */
+export function downloadMinBytes(meta: Meta, episode?: PlayEpisode): number {
+  const type = String(meta.type ?? "").toLowerCase();
+  return episode || type === "movie" || type === "series" || type === "anime" ? MIN_REAL_SIZE_BYTES : 0;
+}
+
+/** Shown through the Downloads page's code "placeholder" (errorText); this is its fallback. */
+const PLACEHOLDER_ERROR = "This source wasn't ready: it sent a short placeholder, not the video. Delete it and pick another source.";
+
+/**
+ * A "finished" download far too small to be the video (saved by a version that didn't check,
+ * or by an app that doesn't refuse it itself): it becomes a failed item with the reason, so it
+ * is never shown as Saved, never offered as the offline copy, and can be deleted. Retry can't
+ * help: for the app it is finished.
+ */
+function placeholderPatch(d: DownloadItem, size: number | null): Partial<DownloadItem> | null {
+  const min = d.minBytes ?? MIN_REAL_SIZE_BYTES;
+  if (size == null || size <= 0 || size >= min) return null;
+  return { status: "error", code: "placeholder", error: PLACEHOLDER_ERROR, retryable: false, bytesPerSec: 0, note: null, paused: false };
+}
 
 type EnqueueArgs = {
   meta: Meta;
@@ -160,11 +189,13 @@ function hydrate() {
       if (!d || typeof d.id !== "string" || typeof d.path !== "string") continue;
       // Desktop downloads die with the app; Android's system downloader keeps going.
       const status = d.status === "downloading" && !ANDROID ? "interrupted" : d.status;
+      // A placeholder clip an older version saved as finished: shown as what it is.
+      const placeholder = status === "done" ? placeholderPatch(d, d.totalBytes ?? d.receivedBytes) : null;
       // A subtitle search interrupted by closing the app is "not searched yet": run it again.
-      if (ANDROID && d.subsState === "searching" && d.status !== "error" && d.status !== "canceled") {
+      if (ANDROID && !placeholder && d.subsState === "searching" && d.status !== "error" && d.status !== "canceled") {
         interruptedSubSearches.push(d.id);
       }
-      items.set(d.id, { ...d, status, bytesPerSec: 0, subsState: d.subsState === "searching" ? null : d.subsState });
+      items.set(d.id, { ...d, status, bytesPerSec: 0, subsState: d.subsState === "searching" ? null : d.subsState, ...placeholder });
     }
     snapshot = [...items.values()].sort((a, b) => b.startedAt - a.startedAt);
   } catch {
@@ -235,7 +266,12 @@ function pollAndroid() {
     const received = n.received ?? cur.receivedBytes;
     const total = n.total ?? cur.totalBytes;
     if (n.status === "done") {
-      if (cur.status !== "done") {
+      // Finished for the app, but far too small to be the video (an app version that doesn't
+      // refuse a placeholder itself): a failed item, never "Saved".
+      const placeholder = placeholderPatch(cur, total ?? received);
+      if (placeholder) {
+        set(cur, { ...placeholder, receivedBytes: total ?? received, totalBytes: total ?? received });
+      } else if (cur.status !== "done") {
         set(cur, { status: "done", receivedBytes: total ?? received, totalBytes: total ?? received, ratio: 1, bytesPerSec: 0, note: null, paused: false, error: null });
       }
       continue;
@@ -509,6 +545,7 @@ export async function enqueueDownload(args: EnqueueArgs): Promise<string> {
     url,
     path,
     source: ANDROID ? args.source : undefined,
+    minBytes: downloadMinBytes(meta, episode),
     status: "downloading",
     receivedBytes: 0,
     totalBytes: null,
@@ -535,6 +572,9 @@ export async function enqueueDownload(args: EnqueueArgs): Promise<string> {
       title: item.title,
       description: item.subtitle,
       subtitles: (args.subtitles ?? []).slice(0, 4).map((s) => ({ url: s.url, lang: s.lang })),
+      // The app's own safety net: it refuses a file this small before saving anything, also
+      // after a resume or a fresh link (which no check on this side sees).
+      minBytes: item.minBytes,
     });
     if (!r.ok) {
       patch(id, { status: "error", error: r.error ?? "Download failed" });
@@ -562,7 +602,11 @@ export async function enqueueDownload(args: EnqueueArgs): Promise<string> {
   });
   handles.set(id, handle);
   handle.promise
-    .then(() => patch(id, { status: "done", ratio: 1, bytesPerSec: 0 }))
+    .then(() => {
+      const d = items.get(id);
+      const placeholder = d ? placeholderPatch(d, d.totalBytes ?? d.receivedBytes) : null;
+      patch(id, placeholder ?? { status: "done", ratio: 1, bytesPerSec: 0 });
+    })
     .catch((e: unknown) => {
       if (e instanceof Error && e.name === "AbortError") {
         patch(id, { status: "canceled", bytesPerSec: 0 });

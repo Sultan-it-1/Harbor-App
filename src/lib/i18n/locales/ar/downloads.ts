@@ -114,6 +114,12 @@ const downloads: Record<string, string> = {
   "1 subtitle": "ترجمة واحدة",
   "{count} subtitles": "{count} ترجمات",
   "Get subtitles": "جلب الترجمات",
+  "This source wasn't ready: it sent a short placeholder, not the video. Delete it and pick another source.": "هذا المصدر لم يكن جاهزًا: أرسل مقطعًا قصيرًا بدل الفيديو. احذفه واختر مصدرًا آخر.",
+  "This source isn't ready: it returned a short placeholder instead of the video. Pick another source.": "هذا المصدر غير جاهز: أرسل مقطعًا قصيرًا بدل الفيديو. اختر مصدرًا آخر.",
+  "Download the best source": "نزّل أفضل مصدر",
+  "Harbor checks the sources in order and saves the first one that is ready. Or choose one below.": "يفحص Harbor المصادر بالترتيب ويحفظ أول مصدر جاهز. أو اختر مصدرًا من القائمة.",
+  "Looking for a source that is ready…": "جارٍ البحث عن مصدر جاهز…",
+  "None of the sources is ready to download right now. Try again later or pick one yourself.": "لا يوجد مصدر جاهز للتنزيل الآن. جرّب لاحقًا أو اختر مصدرًا بنفسك.",
 };
 
 export default downloads;

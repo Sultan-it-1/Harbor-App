@@ -29,6 +29,8 @@ import java.util.concurrent.atomic.AtomicInteger
  *  - two at a time, the rest queued; continues where it stopped (HTTP Range), waits for the
  *    network, retries with back-off; pause / resume / retry from the Downloads page
  *  - picks up again after the app was closed or killed (state lives in SharedPreferences)
+ *  - a film that turns out to be a short placeholder clip (a debrid link's "not ready" answer)
+ *    is refused, never saved as finished (minBytes)
  *  - addon subtitles are saved next to the video (normalised to UTF-8) and deleted with it
  *  - delete removes the video, its subtitles and the folder for good
  *
@@ -72,6 +74,9 @@ class Downloads private constructor(private val ctx: Context) {
         var attempts = 0
         /** Started by an older version through the system downloader (finished there). */
         var legacyDm = -1L
+        /** A whole file smaller than this is a placeholder, not the video (0 = any size). Kept
+         *  with the download, so a resume, a restart of the app or a fresh link is checked too. */
+        var minBytes = 0L
         @Volatile var stop = false
         @Volatile var transfer: HttpTransfer? = null
         var worker: Thread? = null
@@ -87,7 +92,7 @@ class Downloads private constructor(private val ctx: Context) {
     // Page bridge (MainActivity.JsApi)
     // =========================================================================================
 
-    /** {id, url, headers, fileName, title, description, subtitles:[{url,lang,label}]} -> {ok, error?} */
+    /** {id, url, headers, fileName, title, description, subtitles:[{url,lang,label}], minBytes?} -> {ok, error?} */
     fun start(json: String): String {
         val out = JSONObject()
         try {
@@ -104,6 +109,7 @@ class Downloads private constructor(private val ctx: Context) {
             }
             val title = listOf(j.optString("title"), j.optString("description")).filter { it.isNotBlank() }.joinToString(" · ")
             val t = Task(id, j.getString("url"), headers, ua, fileName, title.ifBlank { "Harbor" }, QUEUED, System.currentTimeMillis())
+            t.minBytes = j.optLong("minBytes", 0).coerceAtLeast(0)
             // The check and the entry in one step, so two starts of one id can't both get through.
             synchronized(lock) {
                 val old = tasks[id]
@@ -288,7 +294,8 @@ class Downloads private constructor(private val ctx: Context) {
             else -> "Retrying in ${((t.retryAt - now + 999) / 1000).coerceAtLeast(1)}s"
         }
         PAUSED -> "Paused"
-        ERROR -> t.reason ?: "Download failed"
+        // The placeholder text is the app's own (Strings), in the language of the moment.
+        ERROR -> if (t.code == CODE_PLACEHOLDER) Strings.downloadPlaceholder else t.reason ?: "Download failed"
         else -> ""
     }
 
@@ -383,7 +390,7 @@ class Downloads private constructor(private val ctx: Context) {
             HttpTransfer.Result.Fail(HttpTransfer.Problem.OTHER, "storage unavailable")
         } else {
             dir.mkdirs()
-            val tr = HttpTransfer(t.url, t.headers, t.ua, File(dir, t.file + PART), object : HttpTransfer.Listener {
+            val tr = HttpTransfer(t.url, t.headers, t.ua, File(dir, t.file + PART), minBytes = t.minBytes, listener = object : HttpTransfer.Listener {
                 override fun onTotal(total: Long) {
                     t.total = total
                 }
@@ -473,21 +480,26 @@ class Downloads private constructor(private val ctx: Context) {
                         t.reason = failText(result)
                         t.code = failCode(result)
                         t.http = result.httpCode
+                        // Nothing of a placeholder is kept on disk (see HttpTransfer.tooSmall).
+                        if (result.problem == HttpTransfer.Problem.TOO_SMALL) t.received = bytesOnDisk(t)
                         finished = false
                     }
                 }
             }
             persist(t)
         }
-        finished?.let { ok -> DownloadService.notifyFinished(ctx, t.id, t.title, ok) }
+        finished?.let { ok -> DownloadService.notifyFinished(ctx, t.id, t.title, ok, placeholder = t.code == CODE_PLACEHOLDER) }
         pump()
     }
 
     private fun backoffMs(attempt: Int): Long = BACKOFF_MS[(attempt - 1).coerceIn(0, BACKOFF_MS.size - 1)]
 
+    // "placeholder" is deliberately not one of the codes the page answers with a fresh link
+    // ("expired", "refused"): a fresh link to the same source is the same placeholder.
     private fun failCode(f: HttpTransfer.Result.Fail): String = when {
         f.problem == HttpTransfer.Problem.SPACE -> "no_space"
         f.problem == HttpTransfer.Problem.NOT_MEDIA -> "not_media"
+        f.problem == HttpTransfer.Problem.TOO_SMALL -> CODE_PLACEHOLDER
         f.httpCode == 404 || f.httpCode == 410 -> "expired"
         f.httpCode == 401 || f.httpCode == 403 -> "refused"
         f.httpCode > 0 -> "http_error"
@@ -497,6 +509,7 @@ class Downloads private constructor(private val ctx: Context) {
     private fun failText(f: HttpTransfer.Result.Fail): String = when {
         f.problem == HttpTransfer.Problem.SPACE -> "Not enough storage on the phone"
         f.problem == HttpTransfer.Problem.NOT_MEDIA -> "This link isn't a video file (${f.detail})"
+        f.problem == HttpTransfer.Problem.TOO_SMALL -> Strings.downloadPlaceholder
         f.httpCode == 404 || f.httpCode == 410 -> "The link has expired (HTTP ${f.httpCode}). Tap retry for a fresh link."
         f.httpCode == 401 || f.httpCode == 403 -> "The server refused the download (HTTP ${f.httpCode}). The link may have expired."
         f.httpCode > 0 -> "The server refused the download (HTTP ${f.httpCode})"
@@ -568,6 +581,7 @@ class Downloads private constructor(private val ctx: Context) {
         t.code?.let { j.put("code", it) }
         if (t.http > 0) j.put("http", t.http)
         if (t.legacyDm >= 0) j.put("dm", t.legacyDm)
+        if (t.minBytes > 0) j.put("minBytes", t.minBytes)
         prefs.edit().putString(t.id, j.toString()).apply()
     }
 
@@ -583,6 +597,7 @@ class Downloads private constructor(private val ctx: Context) {
             code = j.optString("code").takeIf { it.isNotBlank() }
             http = j.optInt("http", 0)
             legacyDm = j.optLong("dm", -1)
+            minBytes = j.optLong("minBytes", 0)
         }
     }
 
@@ -795,6 +810,8 @@ class Downloads private constructor(private val ctx: Context) {
         private const val WAIT_NETWORK = "network"
         private const val WAIT_WIFI = "wifi"
         private const val WAIT_RETRY = "retry"
+        /** The source sent its short "not ready" clip instead of the video (HttpTransfer TOO_SMALL). */
+        private const val CODE_PLACEHOLDER = "placeholder"
         private const val NET_OK = 0
         private const val NET_NONE = 1
         private const val NET_METERED = 2

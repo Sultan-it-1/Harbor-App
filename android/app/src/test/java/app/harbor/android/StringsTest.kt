@@ -23,7 +23,7 @@ class StringsTest {
         Strings.seconds(10), Strings.embedded(2), Strings.savedOnDevice(3), Strings.fromAddonsCount(4),
         Strings.subtitlesFound(1), Strings.subtitlesFound(7), Strings.size(130), Strings.boxOpacity(70),
         Strings.delay("+0.5"), Strings.downloadingFiles(1), Strings.downloadingFiles(4),
-        Strings.sizeOf("10 MB", "1.20 GB"), Strings.downloadFailedHint("Film"),
+        Strings.sizeOf("10 MB", "1.20 GB"), Strings.downloadFailedHint("Film"), Strings.downloadPlaceholderHint("Film"),
         Strings.sleepTimerLeft(23), Strings.minutes(15),
         Strings.syncOffset("+0.5"), Strings.syncAnchors(1), Strings.syncSections(2),
     )

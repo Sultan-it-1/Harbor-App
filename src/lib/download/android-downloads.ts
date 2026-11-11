@@ -46,6 +46,9 @@ export function nativeStart(args: {
   title: string;
   description?: string | null;
   subtitles?: { url: string; lang?: string; label?: string }[];
+  /** A whole file smaller than this is a placeholder, not the video: the app refuses it
+   *  (kept with the download, so a resume or a fresh link is checked too). 0 or absent: any size. */
+  minBytes?: number;
 }): { ok: boolean; error?: string } {
   const api = androidApi();
   if (!api?.dlStart) return { ok: false, error: "downloads unavailable" };

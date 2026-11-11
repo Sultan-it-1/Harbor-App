@@ -198,14 +198,15 @@ class DownloadService : Service() {
             }
         }
 
-        /** "Download finished" / "Download failed" for one title (tapping opens Downloads). */
-        fun notifyFinished(ctx: Context, id: String, title: String, ok: Boolean) {
+        /** "Download finished" / "Download failed" for one title (tapping opens Downloads).
+         *  [placeholder]: it failed because the source wasn't ready; Retry isn't the advice then. */
+        fun notifyFinished(ctx: Context, id: String, title: String, ok: Boolean, placeholder: Boolean = false) {
             createChannel(ctx)
             val n = NotificationCompat.Builder(ctx, CHANNEL)
                 .setSmallIcon(R.drawable.ic_download)
                 .setColor(HarborColors.ACCENT)
                 .setContentTitle(if (ok) Strings.downloadFinished else Strings.downloadFailed)
-                .setContentText(if (ok) title else Strings.downloadFailedHint(title))
+                .setContentText(if (ok) title else if (placeholder) Strings.downloadPlaceholderHint(title) else Strings.downloadFailedHint(title))
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setContentIntent(openDownloads(ctx))
