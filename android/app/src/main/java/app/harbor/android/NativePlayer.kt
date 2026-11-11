@@ -1230,11 +1230,6 @@ class NativePlayer(
     private fun renderStreams() {
         val p = panel ?: return
         p.clear()
-        // Not for a download: see ExternalPlayer.canOpen.
-        if (ExternalPlayer.canOpen(source?.optString("url"))) {
-            p.action(Strings.openInAnotherPlayer, R.drawable.ic_external_link) { openInAnotherPlayer() }
-            if (ExternalPlayer.headerExtras(source?.optJSONObject("headers")).isNotEmpty()) p.note(Strings.anotherPlayerHeadersNote)
-        }
         val data = streamsPayload
         if (data == null) {
             p.row(Strings.fetchingSources, null, loading = true, onClick = null)
@@ -1274,35 +1269,6 @@ class NativePlayer(
             shown++
         }
         if (shown == 0) p.note(Strings.noSourcesInQuality)
-    }
-
-    /** Hands the stream that is playing to another video app, through the system's chooser. This
-     *  player pauses and stays where it is, for when the viewer comes back. */
-    private fun openInAnotherPlayer() {
-        val src = source ?: return
-        val url = src.optString("url")
-        if (!ExternalPlayer.canOpen(url)) return
-        val view = ExternalPlayer.viewIntent(url, title, ExternalPlayer.headerExtras(src.optJSONObject("headers")))
-        // The manifest's <queries> lets this see the installed video players on Android 11+. If
-        // the question itself fails, the chooser is still tried.
-        val found = try {
-            activity.packageManager.queryIntentActivities(view, PackageManager.MATCH_DEFAULT_ONLY).isNotEmpty()
-        } catch (_: Exception) {
-            true
-        }
-        if (!found) {
-            toast(Strings.noVideoPlayerApp)
-            return
-        }
-        player?.pause()
-        panel?.dismiss()
-        try {
-            // NO_USER_ACTION: this is not "the viewer left the app", which would start
-            // picture-in-picture (onUserLeaveHint).
-            activity.startActivity(Intent.createChooser(view, Strings.openInAnotherPlayer).addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION))
-        } catch (_: Exception) {
-            toast(Strings.noVideoPlayerApp)
-        }
     }
 
     // ---- subtitles -------------------------------------------------------------------------
