@@ -1,4 +1,4 @@
-import { parseM3u, readM3uHeaderEpgUrls } from "../m3u";
+import { parseM3u } from "../m3u";
 import {
   commitHydratedPlaylist,
   fetchM3uText,
@@ -74,26 +74,13 @@ async function loadM3u(
   middleware: boolean,
 ): Promise<IptvPlaylist> {
   const text = await fetchM3uText(url);
-  if (isM3u(text)) return parseAndShape(withHeaderEpg(src, text, url), text);
+  if (isM3u(text)) return parseAndShape(src, text);
   if (middleware) {
     const recovered = await probeMiddleware(url);
-    if (recovered) {
-      return parseAndShape(
-        withHeaderEpg({ ...src, url: recovered.url }, recovered.text, recovered.url),
-        recovered.text,
-      );
-    }
+    if (recovered) return parseAndShape({ ...src, url: recovered.url }, recovered.text);
   }
   const preview = text.slice(0, 120).replace(/\s+/g, " ");
   throw new Error(`Server response was not an M3U playlist. Got: ${preview || "(empty)"}`);
-}
-
-// Players read the guide address from the #EXTM3U header; adopt it when the user did not
-// set one, so the guide works without typing a second URL. A URL the user did set wins.
-function withHeaderEpg(src: IptvPlaylistSource, text: string, baseUrl: string): IptvPlaylistSource {
-  if (src.epgUrl) return src;
-  const [epgUrl] = readM3uHeaderEpgUrls(text, baseUrl);
-  return epgUrl ? { ...src, epgUrl } : src;
 }
 
 async function probeMiddleware(baseUrl: string): Promise<{ url: string; text: string } | null> {

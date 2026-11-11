@@ -10,16 +10,8 @@ import { useTogether } from "@/lib/together/provider";
 import { buildMatchScores, matchBadge, MATCH_CLOSE } from "@/lib/together/source-match";
 import { HostSourceBanner } from "@/components/host-source-banner";
 import { consumeRecentStubEvent } from "@/lib/dead-streams";
-import {
-  findPreferredSourceMatch,
-  readPlayback,
-  readLastSeriesPlayback,
-  streamMatchesEntry,
-  streamMatchesPreferredSource,
-} from "@/lib/playback-history";
+import { readPlayback, readLastSeriesPlayback, streamMatchesEntry, streamMatchesSource } from "@/lib/playback-history";
 import { useSettings } from "@/lib/settings";
-import { filterStreamsByMode } from "@/lib/streams/mode";
-import { torrentEngineAvailable } from "@/lib/torrent/stremio-stream";
 import type { ScoredStream, Tier } from "@/lib/streams/types";
 import { isAddonRanked } from "@/lib/streams/addon-detect";
 import { useView, type PlayEpisode } from "@/lib/view";
@@ -65,7 +57,7 @@ import { pendingAddons, useStremioSources } from "./play-picker/stremio-layout";
 import { condenseDescription } from "./play-picker/stremio-row";
 import { qualityTier } from "./play-picker/quality-filter";
 import { useCloseOnAndroidBack } from "@/lib/use-android-back";
-import { abbreviateLanguages, addonInstanceKey, autoPlayMediaKey, buildAddonOptions } from "./play-picker/picker-utils";
+import { abbreviateLanguages, addonInstanceKey, buildAddonOptions } from "./play-picker/picker-utils";
 import { stillInTheatres } from "./play-picker/picker-empty-ladder";
 import {
   diagBlock,
@@ -211,12 +203,7 @@ export function PlayPicker({
 
   const filteredPicker = useMemo(() => {
     if (!result) return null;
-    // Settings > Streaming sources > Source mode. "Torrents only" needs a torrent engine;
-    // where there is none (the Android app) a saved "p2p" means everything, or the list
-    // would be reduced to torrents nothing here can play. The filter itself never leaves a
-    // title empty: when the chosen kind has nothing, it returns everything.
-    const mode = settings.streamMode === "p2p" && !torrentEngineAvailable() ? "both" : settings.streamMode;
-    let all = filterStreamsByMode(result.picker.all, mode);
+    let all = result.picker.all;
     if (langFilter && preferredLangs.length > 0) {
       const langFiltered = all.filter((s) => streamMatchesLangs(s, preferredLangs));
       if (langFiltered.length > 0) all = langFiltered;
@@ -240,7 +227,7 @@ export function PlayPicker({
     );
     const primary = primaryCandidates[0] ?? null;
     return { primary, byTier, all };
-  }, [result, settings.streamMode, langFilter, preferredLangs, cachedOnly, debrids.length, isCached, hostMatch]);
+  }, [result, langFilter, preferredLangs, cachedOnly, debrids.length, isCached, hostMatch]);
 
   const anyAddonRanked = useMemo(() => {
     const all = filteredPicker?.all ?? [];
@@ -308,10 +295,6 @@ export function PlayPicker({
     isTorrentioStream,
     preferredLangs,
     hostSource: hostSourceForMedia,
-    // The same numbering the source filter checks against. Not for anime: its releases
-    // count episodes across seasons, so their numbers say nothing reliable here.
-    season: isAnimeRequest ? null : (episode?.imdbSeason ?? episode?.season ?? null),
-    episode: isAnimeRequest ? null : (episode?.imdbEpisode ?? episode?.episode ?? null),
   });
 
   const autoFiredRef = useRef(false);
@@ -339,10 +322,7 @@ export function PlayPicker({
 
   const sameSourceMatch: ScoredStream | null = useMemo(() => {
     if (!filteredPicker || !lastSeriesSource || previousMatch) return null;
-    // Only a confirmed same release (same torrent, binge group or release group, at the same
-    // resolution and dub) is shown as "the same source"; a look-alike from the same addon
-    // is not.
-    return findPreferredSourceMatch(filteredPicker.all, lastSeriesSource, streamMatchesPreferredSource);
+    return filteredPicker.all.find((s) => streamMatchesSource(s, lastSeriesSource)) ?? null;
   }, [filteredPicker, lastSeriesSource, previousMatch]);
 
   const currentPick: ScoredStream | null = useMemo(() => {
@@ -411,7 +391,6 @@ export function PlayPicker({
     autoActive,
     rememberedHandledFirst: rememberedHandledFirst && autoAttemptIdx === 0,
     attempt,
-    mediaKey: autoPlayMediaKey(meta.id, episode),
     autoCandidates,
     resolving,
     autoAttemptIdx,
@@ -432,11 +411,9 @@ export function PlayPicker({
   });
 
   const allCount = filteredPicker?.all.length ?? 0;
-  // A list restored from the cache comes without the raw addon lists (the cache doesn't keep
-  // them): count what it does keep. With 0 here, "Only 1 source after filtering" lost its
-  // "Harbor dropped N results" line and the "Show everything anyway" button.
-  const rawSeen = (result?.raw.addon.length ?? 0) + (result?.raw.library.length ?? 0);
-  const rawCount = rawSeen > 0 || !result ? rawSeen : result.picker.all.length + result.rejected.length;
+  const rawCount =
+    (result?.raw.addon.length ?? 0) +
+    (result?.raw.library.length ?? 0);
   const addonCount = useMemo(() => {
     if (!filteredPicker) return 0;
     return new Set(filteredPicker.all.map((s) => s.addonId)).size;
@@ -455,7 +432,7 @@ export function PlayPicker({
       seen.set(s.addonId, { id: s.addonId, name: s.addonName, logo: addonLogoMap.get(s.addonId) ?? null });
     }
     return [...seen.values()];
-  }, [filteredPicker, addonLogoMap]);
+  }, [result, addonLogoMap]);
   const backdropSrc = episode?.still || meta.background || meta.poster;
 
   const [maxWaitElapsed, setMaxWaitElapsed] = useState(false);

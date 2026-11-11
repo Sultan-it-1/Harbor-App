@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { androidApi, visiblePopups } from "@/lib/android";
 import type { Meta } from "@/lib/cinemeta";
-import { formatAirsIn, formatRemaining } from "@/components/continue-card";
+import { formatRemaining } from "@/components/continue-card";
 import { useContextMenu } from "@/lib/context-menu";
 import { useOnboarding } from "@/lib/onboarding";
 import { rpdbPoster } from "@/lib/providers/rpdb";
@@ -526,11 +526,8 @@ export function cwCard(item: LibraryItem, t: T) {
   const parts: string[] = [];
   if (animeEp && Number.isFinite(animeEp) && animeEp > 0) parts.push(`Ep ${animeEp}`);
   else if (ep) parts.push(`S${ep.season}E${ep.episode}`);
-  // Not out yet: when it airs, in place of "Up Next". The card opens as any other.
-  if (item.waitingForAir) parts.push(formatAirsIn(t, item.nextAirDate));
-  else if (item.upNext) parts.push(t("Up Next"));
-  // A tracker's card (Simkl, Trakt) has an estimated length: no "time left" made of it.
-  else if (dur > 0 && !item.external) parts.push(formatRemaining(t, dur - off));
+  if (item.upNext) parts.push(t("Up Next"));
+  else if (dur > 0 && item.external !== "simkl") parts.push(formatRemaining(t, dur - off));
   const wide = (u?: string) => (u ? u.replace(/\/t\/p\/original\//, "/t/p/w780/") : u);
   return {
     title: item.name,

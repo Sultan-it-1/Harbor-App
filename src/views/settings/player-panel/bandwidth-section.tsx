@@ -17,8 +17,8 @@ export function BandwidthInput() {
   const cap = settings.bandwidthMbps;
   const summary =
     cap === 0
-      ? t("No filter. All bitrates considered equally.")
-      : t("Streams over {cap} Mbps will rank lower, even when cached.", { cap });
+      ? "No filter. All bitrates considered equally."
+      : `Streams over ${cap} Mbps will rank lower, even when cached.`;
   return (
     <div id="set-internet-speed" className="scroll-mt-28 flex flex-col gap-4 rounded-2xl border border-edge-soft bg-canvas/40 p-4">
       <div className="flex items-start justify-between gap-3">
@@ -44,7 +44,7 @@ export function BandwidthInput() {
                   : "border-edge-soft bg-canvas/30 text-ink-muted hover:border-edge hover:text-ink"
               }`}
             >
-              {p.value === 0 || p.value === 1000 ? t(p.label) : t("{n} Mbps", { n: p.label })}
+              {p.value === 0 ? p.label : p.value === 1000 ? p.label : `${p.label} Mbps`}
             </button>
           );
         })}

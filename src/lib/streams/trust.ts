@@ -256,9 +256,7 @@ function checkOne(
     !s.seasonPack &&
     opts.expectedEpisode != null &&
     s.episode != null &&
-    // A double-episode file (S01E01-E02) holds the wanted episode when it is either of
-    // the two, so it is not a mismatch just because its first number differs.
-    !(opts.expectedEpisode >= s.episode && opts.expectedEpisode <= (s.episodeEnd ?? s.episode))
+    s.episode !== opts.expectedEpisode
   ) {
     return `episode-mismatch:${s.episode}-vs-${opts.expectedEpisode}`;
   }

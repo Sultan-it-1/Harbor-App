@@ -2,14 +2,7 @@ import type { Meta } from "../../cinemeta";
 import { get, IMG, tmdbLanguageIso } from "./tmdb-client";
 import { loadStoredSettings } from "@/lib/settings/load";
 import { pickLogo } from "./tmdb-images";
-import {
-  mergeTrailerVideoGroups,
-  pickTrailerVideos,
-  sortTrailerVideos,
-  tmdbSeasonVideos,
-  trailerSeasonNumbers,
-  type Video,
-} from "./tmdb-trailers";
+import { pickTrailers, type Video } from "./tmdb-trailers";
 import type { PersonRef } from "./tmdb-people";
 
 export type CastEntry = {
@@ -55,7 +48,6 @@ export type ExtraVideo = {
   ytId: string;
   name: string;
   type: string;
-  publishedAt?: string;
 };
 
 export type GalleryImages = {
@@ -92,9 +84,6 @@ export type TmdbDetail = {
   networksRich: Array<{ id: number; name: string }>;
   trailerYtId: string | null;
   trailerCandidates: string[];
-  /** The same videos as `trailerCandidates`, in the same order, with their names
-   *  (a season's trailer is named "Season N - ..."). */
-  trailerVideos?: ExtraVideo[];
   extraVideos: ExtraVideo[];
   gallery: GalleryImages;
   cast: CastEntry[];
@@ -173,9 +162,6 @@ const uniqByName = (entries: Array<{ id: number; name: string }>): PersonRef[] =
   return out;
 };
 
-// How long the detail page waits for the seasons' own trailers before going without them.
-const SEASON_VIDEOS_WAIT_MS = 2500;
-
 export async function tmdbDetails(key: string, meta: Meta): Promise<TmdbDetail | null> {
   if (!key) return null;
   let kind: "movie" | "tv";
@@ -218,64 +204,13 @@ export async function tmdbDetails(key: string, meta: Meta): Promise<TmdbDetail |
     .filter((id: unknown): id is number => typeof id === "number");
 
   const videos: Video[] = raw.videos?.results ?? [];
-  // A show's own list often stops at the first season's trailer, so the recent seasons'
-  // videos are asked for too. They are extras: if TMDB is slow the page does not wait
-  // for them and is built from the show's own videos.
-  const seasonNumbers = kind === "tv" ? trailerSeasonNumbers(raw.seasons) : [];
-  const seasonVideoGroups =
-    seasonNumbers.length > 0
-      ? await Promise.race([
-          tmdbSeasonVideos(key, id, seasonNumbers),
-          new Promise<[]>((resolve) => setTimeout(() => resolve([]), SEASON_VIDEOS_WAIT_MS)),
-        ])
-      : [];
-  const seasonVideos = seasonVideoGroups.flatMap((group) =>
-    group.videos.map((video) => ({ video, seasonNumber: group.seasonNumber })),
-  );
-  const seasonByKey = new Map(seasonVideos.map((entry) => [entry.video.key, entry.seasonNumber]));
-  const allVideos =
-    kind === "tv" ? [...videos, ...seasonVideos.map((entry) => entry.video)] : videos;
-  // Trailer before teaser, official first, newest first; a season's videos go ahead of
-  // the show's because they are the ones about what is airing now.
-  const chosenVideos =
-    kind === "tv"
-      ? mergeTrailerVideoGroups(
-          sortTrailerVideos(pickTrailerVideos(seasonVideos.map((entry) => entry.video))),
-          sortTrailerVideos(pickTrailerVideos(videos)),
-        )
-      : sortTrailerVideos(pickTrailerVideos(videos));
-  const trailerVideos: ExtraVideo[] = chosenVideos.map((video) => {
-    const seasonNumber = seasonByKey.get(video.key);
-    const name = video.name?.trim() || video.type || "Trailer";
-    return {
-      ytId: video.key,
-      name: seasonNumber ? `Season ${seasonNumber} - ${name}` : name,
-      type: video.type || "Trailer",
-      publishedAt: video.published_at,
-    };
-  });
-  const trailerCandidates = trailerVideos.map((video) => video.ytId);
+  const trailerCandidates = pickTrailers(videos);
   const trailerYtId = trailerCandidates[0] ?? null;
   const candidateSet = new Set(trailerCandidates);
-  const extraSeen = new Set<string>();
-  const extraVideos: ExtraVideo[] = allVideos
-    .filter((video) => {
-      if (video.site !== "YouTube" || !video.key) return false;
-      if (candidateSet.has(video.key) || extraSeen.has(video.key)) return false;
-      extraSeen.add(video.key);
-      return true;
-    })
+  const extraVideos: ExtraVideo[] = videos
+    .filter((v) => v.site === "YouTube" && !candidateSet.has(v.key))
     .slice(0, 12)
-    .map((video) => {
-      const seasonNumber = seasonByKey.get(video.key);
-      const name = video.name?.trim() || video.type || "Trailer";
-      return {
-        ytId: video.key,
-        name: seasonNumber ? `Season ${seasonNumber} - ${name}` : name,
-        type: video.type || "Trailer",
-        publishedAt: video.published_at,
-      };
-    });
+    .map((v) => ({ ytId: v.key, name: (v as any).name ?? v.type, type: v.type }));
 
   const gallery = buildGallery(raw.images, logo);
 
@@ -404,7 +339,6 @@ export async function tmdbDetails(key: string, meta: Meta): Promise<TmdbDetail |
       .map((n: any) => ({ id: n.id, name: n.name })),
     trailerYtId,
     trailerCandidates,
-    trailerVideos,
     extraVideos,
     gallery,
     cast,

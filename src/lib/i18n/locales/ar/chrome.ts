@@ -60,7 +60,7 @@ const chrome: Record<string, string> = {
   "welcome.dismiss": "ابدأ الآن",
 
   "arabic.hub.title": "العربية",
-  "arabic.row.ramadan": "مسلسلات رمضان {year}",
+  "arabic.row.ramadan": "مسلسلات رمضان 2026",
   "arabic.row.drama": "دراما عربية",
   "arabic.row.movies": "أفلام عربية",
   "arabic.row.classics": "كلاسيكيات السينما المصرية",
@@ -146,9 +146,6 @@ const chrome: Record<string, string> = {
   "Your Stremio session has ended (signed out elsewhere, or the password changed). Sign in again to see your library.": "انتهت جلسة Stremio (سُجّل الخروج من مكان آخر أو تغيّرت كلمة المرور). سجّل الدخول مرة ثانية لترى مكتبتك.",
   "Storage is full": "مساحة التخزين ممتلئة",
   "Harbor couldn't save a change (a sign-in or a setting), even after clearing its caches. Free some space on this device, then try again.": "تعذّر على Harbor حفظ تغيير (تسجيل دخول أو إعداد) حتى بعد مسح ذاكرته المؤقتة. حرّر بعض المساحة على هذا الجهاز ثم حاول مرة أخرى.",
-  "Videos you download are kept in the app's own folder on this phone. They are removed if you uninstall the app.": "الفيديوهات اللي تحمّلها تنحفظ في مجلد التطبيق نفسه على هذا الجوال، وتنحذف إذا حذفت التطبيق.",
-  "{n} Mbps": "{n} ميجابت/ثانية",
-  "1 Gbps": "1 جيجابت/ثانية",
 };
 
 export default chrome;

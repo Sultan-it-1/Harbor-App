@@ -5,7 +5,7 @@ import { useDebridClients } from "@/lib/debrid/registry";
 import { useSettings } from "@/lib/settings";
 import { isWeb } from "@/lib/platform";
 import { NATIVE_PLAYER_CLOSED_EVENT, isAndroidApp } from "@/lib/android";
-import { useAndroidPlayerExtras, useAndroidSkipSegments } from "./player/hooks/use-android-extras";
+import { useAndroidPlayerExtras } from "./player/hooks/use-android-extras";
 import { writePlayerVolume } from "@/lib/player-volume";
 import { nameColor } from "@/lib/together/colors";
 import { useTogether } from "@/lib/together/provider";
@@ -129,39 +129,13 @@ export function PlayerView({ src }: { src: PlayerSrc }) {
   const snapRef = useRef(snap);
   snapRef.current = snap;
   const [foreignNotice, setForeignNotice] = useState<{ title: string | null; from: string } | null>(null);
-  const [roomStarted, setHasStarted] = useState(false);
-  // Watch Together's lobby holds playback paused until the host presses Start (or a guest
-  // presses "Play without sync"). Both buttons are part of the web player, which the native
-  // Android player covers: there nothing could end the wait, and the video paused again every
-  // time you pressed play. So Android has no lobby: it counts as started from the beginning
-  // (as host that also starts the room for everyone; as guest you follow the host's position
-  // as soon as it arrives).
-  const hasStarted = roomStarted || isAndroidApp();
+  const [hasStarted, setHasStarted] = useState(false);
   const cast = usePlayerCast({ src, debrids, snapRef, bridgeRef, settings });
   const [now, setNow] = useState(() => Date.now());
   const { pipMode, togglePipMode, exitPip } = usePipMode({ bridgeRef, setChromeHidden });
-  // Before the hooks that reload the stream: they read from it which source is playing now.
-  const {
-    streamCheckOpen,
-    setStreamCheckOpen,
-    switcherOpen,
-    setSwitcherOpen,
-    swapResolvingKey,
-    liveUrl,
-    liveStreamRef,
-    liveSourceRef,
-    pickAnother,
-    onSwitchStream,
-  } = useStreamSwitcher({
-    bridgeRef,
-    src,
-    snap,
-    debrids,
-  });
   const { slowLoad, transcodedUrl, audioFixPending } = useAutoRetry({
     bridgeRef,
     src,
-    liveSourceRef,
     snap,
     stremioServerTranscode: settings.stremioServerTranscode,
     instantPlay: settings.instantPlay,
@@ -174,7 +148,7 @@ export function PlayerView({ src }: { src: PlayerSrc }) {
     engineStats,
   });
 
-  useWakeReconnect({ bridgeRef, src, liveSourceRef, snap });
+  useWakeReconnect({ bridgeRef, src, snap });
 
   useEffect(() => {
     if (roomSnapshot.state !== "joined") return;
@@ -299,10 +273,25 @@ export function PlayerView({ src }: { src: PlayerSrc }) {
     episode,
   });
 
+  const {
+    streamCheckOpen,
+    setStreamCheckOpen,
+    switcherOpen,
+    setSwitcherOpen,
+    swapResolvingKey,
+    liveUrl,
+    liveStreamRef,
+    pickAnother,
+    onSwitchStream,
+  } = useStreamSwitcher({
+    bridgeRef,
+    src,
+    snap,
+    debrids,
+  });
   useAndroidPlayerExtras({
     src,
     liveUrl,
-    streamRef: liveStreamRef ?? src.streamRef,
     quality: liveStreamRef?.quality ?? src.streamRef?.quality ?? null,
     swapResolvingKey,
     onSwitchStream,
@@ -554,18 +543,15 @@ export function PlayerView({ src }: { src: PlayerSrc }) {
     liveOverlay.isLive ||
     !!src.meta.id?.startsWith("iptv:") ||
     (!!src.meta.type && !["movie", "series", "anime"].includes(String(src.meta.type).toLowerCase()));
-  // Reloads load the source playing now: after a switch inside the player, the one the player
-  // opened with (src) is no longer it.
   const reloadLive = useCallback(() => {
-    const cur = liveSourceRef.current;
     bridgeRef.current?.load({
-      url: cur.url,
-      subtitles: cur.subtitles,
-      notWebReady: cur.notWebReady,
+      url: src.url,
+      subtitles: src.subtitles,
+      notWebReady: src.notWebReady,
       isLive: true,
-      headers: cur.headers,
+      headers: src.headers,
     });
-  }, [liveSourceRef]);
+  }, [src.url, src.subtitles, src.notWebReady, src.headers]);
 
   useAutoEndExit({
     src,
@@ -602,13 +588,6 @@ export function PlayerView({ src }: { src: PlayerSrc }) {
     setSkipSegmentsView(skipSegments);
     return () => setSkipSegmentsView([]);
   }, [skipSegments]);
-  // Android app: the native player shows the skip button and skips intros (a room guest never
-  // skips by itself, as in the page's own player).
-  useAndroidSkipSegments({
-    src,
-    segments: skipSegments,
-    autoSkipIntro: settings.autoSkipIntro === true && !roomGuest,
-  });
   const hasNextEpisodeNow = canChangeEpisode && !!adjacent.next;
 
   useMpvEmbed({ engine, settings });
@@ -699,8 +678,7 @@ export function PlayerView({ src }: { src: PlayerSrc }) {
     onLoaderRetry: () => {
       const b = bridgeRef.current;
       if (b) {
-        const cur = liveSourceRef.current;
-        void b.load({ url: cur.url, subtitles: cur.subtitles, notWebReady: cur.notWebReady, isLive: src.meta.id?.startsWith("iptv:"), headers: cur.headers });
+        void b.load({ url: src.url, subtitles: src.subtitles, notWebReady: src.notWebReady, isLive: src.meta.id?.startsWith("iptv:"), headers: src.headers });
       }
     },
     bridgeRef,

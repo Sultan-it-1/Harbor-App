@@ -446,15 +446,6 @@ const player: Record<string, string> = {
   "That is a large correction ({n}%). One of the two points may be off, double-check them.": "هذا تصحيح كبير ({n}%). قد تكون إحدى النقطتين خاطئة، راجعهما.",
   "Anime4K isn't set up yet. Turn it on in Settings under Anime.": "Anime4K غير مُعدّ بعد. فعّله من الإعدادات ضمن الأنمي.",
   "HDR controls could not load. Showing the video with controls. For reliable HDR, switch to True HDR, separate window in Settings.": "تعذّر تحميل أزرار HDR. يُعرض الفيديو مع أزرار التحكم. لـ HDR موثوق، اختر «HDR حقيقي، نافذة منفصلة» في الإعدادات.",
-  // Android player: messages from the page shown by the native player.
-  "There is no source list for this title (open it from its page and pick a source).": "ما فيه قائمة مصادر لهذا العنوان (افتحه من صفحته واختر مصدر).",
-  "This source is no longer available": "المصدر ما عاد متوفر",
-  "This source is not ready on your debrid, so you are back on the one you were watching. Ready sources are marked ⚡": "هذا المصدر مو جاهز في الديبريد، رجّعتك للمصدر اللي كنت عليه. المصادر الجاهزة عليها ⚡",
-  "This source did not start, so you are back on the one you were watching": "هذا المصدر ما بدأ، رجّعتك للمصدر اللي كنت عليه",
-  "This source did not play, so you are back on the one you were watching": "هذا المصدر ما اشتغل، رجّعتك للمصدر اللي كنت عليه",
-  // Live TV: exporting a playlist.
-  "The playlist was not saved.": "لم يُحفظ ملف قائمة التشغيل.",
-  "Couldn't export the playlist.": "تعذّر تصدير قائمة التشغيل.",
 };
 
 export default player;

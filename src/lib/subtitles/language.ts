@@ -66,25 +66,6 @@ export function languageName(code: string): string {
   return NAMES[n] || code.toUpperCase();
 }
 
-export function isKnownLanguage(code?: string | null): boolean {
-  return !!code && Object.prototype.hasOwnProperty.call(NAMES, normalizeLang(code));
-}
-
-// A translating addon's generated offer is a display label ("Make Spanish (Latin
-// America) (SPN)"), not a language code.
-const GENERATED_OFFER_LABEL_PATTERN = /^make\s+[\p{L}\p{N}][\p{L}\p{N}\s().,'&+\/-]*$/iu;
-
-/**
- * True when a "language" value is really a translating addon's on-demand offer label
- * such as "Make Hindi" rather than a language code or name. Real codes and names never
- * start with the offer verb, so a notice or provider title ("SubMaker Notice") is not
- * mistaken for an offer.
- */
-export function isGeneratedLangLabel(raw?: string | null): boolean {
-  const label = raw?.trim() ?? "";
-  return label.length > 0 && !isKnownLanguage(label) && GENERATED_OFFER_LABEL_PATTERN.test(label);
-}
-
 export function langScore(lang: string, preferred: string[]): number {
   if (!preferred.length) return 0;
   const n = normalizeLang(lang);

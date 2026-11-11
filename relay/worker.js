@@ -1,13 +1,5 @@
 const WORKER_VERSION = 10;
 const MAX_AVATAR_LENGTH = 600_000;
-// Size limits on what a participant can make the room relay to everyone else. Anything over them
-// is dropped whole. Only hello and profile may be big (they can carry an avatar picture).
-const MAX_MESSAGE_LENGTH = 64 * 1024;
-const MAX_PROFILE_MESSAGE_LENGTH = MAX_AVATAR_LENGTH + 8 * 1024;
-const MAX_CLIENT_ID_LENGTH = 128;
-// The page a cursor or a stroke is on (a view path), and a "where I am" card (title, poster links).
-const MAX_PATH_LENGTH = 512;
-const MAX_LOCATION_LENGTH = 4096;
 
 function sanitizeAvatar(v) {
   if (typeof v !== "string") return null;
@@ -170,17 +162,12 @@ export class Room {
 
   onMessage(socket, ev) {
     let msg;
-    let size;
     try {
-      size = typeof ev.data === "string" ? ev.data.length : ev.data.byteLength;
-      if (size > MAX_PROFILE_MESSAGE_LENGTH) return;
       const data = typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data);
       msg = JSON.parse(data);
     } catch {
       return;
     }
-    if (!msg || typeof msg !== "object") return;
-    if (size > MAX_MESSAGE_LENGTH && msg.t !== "hello" && msg.t !== "profile") return;
     this.lastActivity = Date.now();
     switch (msg.t) {
       case "hello":
@@ -225,8 +212,6 @@ export class Room {
     this.broadcast({ t: "participant-ready", clientId: peer.clientId, ready: peer.ready });
   }
 
-  // Any participant may take over as host: the app does this for whoever picks the next thing to
-  // watch (claim-host with fresh), not only when the host has left.
   handleClaimHost(socket, msg) {
     const peer = this.peers.get(socket);
     if (!peer) return;
@@ -274,9 +259,7 @@ export class Room {
   handleCursor(socket, msg) {
     const peer = this.peers.get(socket);
     if (!peer) return;
-    if (!Number.isFinite(msg.x) || !Number.isFinite(msg.y)) return;
-    const path = typeof msg.path === "string" ? msg.path : "";
-    if (path.length > MAX_PATH_LENGTH) return;
+    if (typeof msg.x !== "number" || typeof msg.y !== "number") return;
     this.broadcast(
       {
         t: "cursor",
@@ -285,7 +268,7 @@ export class Room {
         x: msg.x,
         y: msg.y,
         visible: !!msg.visible,
-        path,
+        path: typeof msg.path === "string" ? msg.path : "",
       },
       socket,
     );
@@ -297,8 +280,6 @@ export class Room {
     if (typeof msg.strokeId !== "string" || msg.strokeId.length === 0 || msg.strokeId.length > 64) return;
     const phase = msg.phase === "start" || msg.phase === "point" || msg.phase === "end" ? msg.phase : null;
     if (!phase) return;
-    const path = typeof msg.path === "string" ? msg.path : "";
-    if (path.length > MAX_PATH_LENGTH) return;
     this.broadcast(
       {
         t: "draw",
@@ -306,10 +287,10 @@ export class Room {
         name: peer.name,
         strokeId: msg.strokeId,
         phase,
-        x: Number.isFinite(msg.x) ? msg.x : undefined,
-        y: Number.isFinite(msg.y) ? msg.y : undefined,
+        x: typeof msg.x === "number" ? msg.x : undefined,
+        y: typeof msg.y === "number" ? msg.y : undefined,
         color: typeof msg.color === "string" ? msg.color.slice(0, 32) : undefined,
-        path,
+        path: typeof msg.path === "string" ? msg.path : "",
       },
       socket,
     );
@@ -318,17 +299,12 @@ export class Room {
   handlePresence(socket, msg) {
     const peer = this.peers.get(socket);
     if (!peer) return;
-    let location;
-    if (msg.location && typeof msg.location === "object" && !Array.isArray(msg.location)) {
-      if (JSON.stringify(msg.location).length > MAX_LOCATION_LENGTH) return;
-      location = msg.location;
-    }
     this.broadcast(
       {
         t: "presence",
         from: peer.clientId,
         activeAt: Date.now(),
-        location,
+        location: msg && typeof msg.location === "object" ? msg.location : undefined,
       },
       socket,
     );
@@ -356,7 +332,7 @@ export class Room {
   }
 
   handleHello(socket, msg) {
-    if (typeof msg.clientId !== "string" || msg.clientId.length === 0 || msg.clientId.length > MAX_CLIENT_ID_LENGTH) {
+    if (!msg.clientId) {
       this.send(socket, { t: "error", code: "missing_client_id", message: "clientId required" });
       try { socket.close(1008, "missing_client_id"); } catch {}
       return;
@@ -365,8 +341,6 @@ export class Room {
     const avatar = sanitizeAvatar(msg.avatar);
     const color = sanitizeColor(msg.color);
     const peer = { socket, clientId: msg.clientId, name, joinedAt: Date.now(), ready: false, avatar, color, lastStateAt: 0 };
-    // A hello with a clientId that is already in the room takes that participant's place: this is
-    // how a client that reconnects replaces its own dead socket, which may not have closed yet.
     for (const [s, p] of this.peers) {
       if (p.clientId === msg.clientId && s !== socket) {
         try { s.close(1000, "replaced"); } catch {}

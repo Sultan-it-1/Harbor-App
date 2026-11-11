@@ -1,49 +1,14 @@
-import { forgetDeadStreamsMemo } from "./dead-streams";
-import { dropOldestSnapshots } from "./snapshots";
-
-// Kept parsed in memory by dead-streams.ts, which has to hear when it is removed here.
-const DEAD_STREAMS_KEY = "harbor.dead-streams.v1";
-
 const PRUNABLE_KEYS_IN_ORDER: string[] = [
   "harbor.omdb.v1",
   "harbor.omdb.misses",
   "harbor.iptv.hydration.v2",
-  DEAD_STREAMS_KEY,
+  "harbor.dead-streams.v1",
   "harbor.discover.v1",
   "harbor.playback-history.v1",
   "harbor.discover.events.v1",
   "harbor.scroll.v1",
   "harbor.webhook.lastTick",
 ];
-
-// After the caches: the player's thumbnails (up to 80 small JPEGs, oldest first, a few at a
-// time), then resume positions nobody has touched for a year and a half.
-const SNAPSHOT_BATCH = 8;
-const SNAPSHOT_MAX_ROUNDS = 20;
-const RESUME_KEY = "harbor.resume";
-const RESUME_MAX_AGE_MS = 548 * 24 * 60 * 60 * 1000;
-
-function pruneOldResume(): boolean {
-  try {
-    const raw = localStorage.getItem(RESUME_KEY);
-    if (!raw) return false;
-    const all = JSON.parse(raw) as Record<string, { t?: number } | null>;
-    const cutoff = Date.now() - RESUME_MAX_AGE_MS;
-    let dropped = 0;
-    for (const [k, e] of Object.entries(all)) {
-      if (typeof e?.t === "number" && e.t < cutoff) {
-        delete all[k];
-        dropped++;
-      }
-    }
-    if (dropped === 0) return false;
-    localStorage.setItem(RESUME_KEY, JSON.stringify(all));
-    console.info(`[storage] pruned ${dropped} resume positions older than 18 months`);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function isQuotaError(e: unknown): boolean {
   if (e instanceof DOMException) {
@@ -61,7 +26,6 @@ function pruneOne(key: string): number {
     if (cur == null) return 0;
     const freed = cur.length + key.length;
     localStorage.removeItem(key);
-    if (key === DEAD_STREAMS_KEY) forgetDeadStreamsMemo();
     console.info(`[storage] pruned "${key}" to free ${freed} chars`);
     return freed;
   } catch {
@@ -76,25 +40,16 @@ export function setItemWithRecovery(key: string, value: string): boolean {
   } catch (e) {
     if (!isQuotaError(e)) throw e;
   }
-  const retry = (): boolean => {
+  for (const candidate of PRUNABLE_KEYS_IN_ORDER) {
+    if (candidate === key) continue;
+    pruneOne(candidate);
     try {
       localStorage.setItem(key, value);
       return true;
     } catch (e) {
       if (!isQuotaError(e)) throw e;
-      return false;
     }
-  };
-  for (const candidate of PRUNABLE_KEYS_IN_ORDER) {
-    if (candidate === key) continue;
-    pruneOne(candidate);
-    if (retry()) return true;
   }
-  for (let round = 0; round < SNAPSHOT_MAX_ROUNDS; round++) {
-    if (dropOldestSnapshots(SNAPSHOT_BATCH) === 0) break;
-    if (retry()) return true;
-  }
-  if (key !== RESUME_KEY && pruneOldResume() && retry()) return true;
   console.warn(`[storage] giving up on "${key}" after pruning every known cache`);
   // Say so on screen: a sign-in or setting that only lives in memory is lost when Android ends
   // the app (StorageFullToast).

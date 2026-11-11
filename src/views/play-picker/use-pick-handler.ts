@@ -233,11 +233,7 @@ export function usePickHandler({
             title: meta.name,
             parsedTitle: stream.parsedTitle ?? null,
             resolution: stream.resolution ?? null,
-            // The release group and the dub are what "keep the same source for the next
-            // episode" recognises the release by.
-            releaseGroup: stream.releaseGroupNormalized ?? null,
             source: stream.source ?? null,
-            audioLanguages: stream.audioLanguages?.length ? stream.audioLanguages : null,
             size: stream.size ?? null,
             bingeGroup: stream.behaviorHints?.bingeGroup ?? null,
             cachedSlugs: Object.entries(stream.cached ?? {})

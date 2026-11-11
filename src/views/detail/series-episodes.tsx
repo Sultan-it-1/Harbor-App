@@ -331,24 +331,6 @@ export function SeriesEpisodes({
     name: ep.name || undefined,
     still: stillOf(ep)[0],
     overview: ep.overview || undefined,
-    // The player falls back on it to tell a finished episode when it never measured the length.
-    runtime: ep.runtime ?? undefined,
-  });
-  // TMDB has no episodes for this season: the page lists the addon's (Cinemeta's) episodes
-  // instead (CinemetaFallback below), and so does the native row, which used to stay empty.
-  const fallbackEps =
-    !loading && enrichedEpisodes.length === 0
-      ? (cinemetaVideos ?? [])
-          .filter((v) => v.season === active && v.episode != null)
-          .slice()
-          .sort((x, y) => (x.episode ?? 0) - (y.episode ?? 0))
-      : [];
-  const playFallbackOf = (v: (typeof fallbackEps)[number]) => ({
-    season: v.season ?? 0,
-    episode: v.episode ?? 1,
-    name: v.name || v.title || undefined,
-    videoId: v.id || undefined,
-    still: v.thumbnail || undefined,
   });
   const nativeEpisodes = useReportNativeRow(
     "episodes",
@@ -361,8 +343,6 @@ export function SeriesEpisodes({
           ? `${activeSeason.episodeCount === 1 ? t("{n} episode", { n: activeSeason.episodeCount }) : t("{n} episodes", { n: activeSeason.episodeCount })}${activeSeason.airDate ? ` · ${activeSeason.airDate.slice(0, 4)}` : ""}`
           : null,
       kind: "episodes",
-      // The addon's episodes have no episode page (it is built from TMDB).
-      noInfo: fallbackEps.length > 0,
       metas: [],
       chips:
         seasons.length > 1
@@ -377,17 +357,7 @@ export function SeriesEpisodes({
             ]
           : []),
       ],
-      cards: fallbackEps.length > 0 ? fallbackEps.map((v) => {
-        const n = v.episode ?? 1;
-        const aired = formatAirDate(v.released ?? v.firstAired ?? null);
-        return {
-          title: v.name || v.title || aired || t("Episode {n}", { n }),
-          sub: [`S${v.season} E${n}`, aired].filter(Boolean).join("  ·  "),
-          img: v.thumbnail ? [v.thumbnail] : [],
-          rank: n,
-          play: true,
-        };
-      }) : enrichedEpisodes.map((ep) => {
+      cards: enrichedEpisodes.map((ep) => {
         const n = ep.episodeNumber;
         const pr = progressByEp.get(n) ?? { ratio: 0, watched: false, startedAt: 0 };
         const sp = spoilerFor(n);
@@ -418,11 +388,6 @@ export function SeriesEpisodes({
         };
       }),
       onOpen: (i) => {
-        const fb = fallbackEps[i];
-        if (fb) {
-          openPicker(meta, playFallbackOf(fb), { autoPlay: settings.instantPlay });
-          return;
-        }
         const ep = enrichedEpisodes[i];
         if (ep) openPicker(meta, playEpisodeOf(ep), { autoPlay: settings.instantPlay });
       },
@@ -447,11 +412,6 @@ export function SeriesEpisodes({
         }
       },
       onAction: (a, i) => {
-        const fb = fallbackEps[i];
-        if (fb) {
-          if (a === "dl") openPicker(meta, playFallbackOf(fb), { intent: "download" });
-          return true;
-        }
         const ep = enrichedEpisodes[i];
         if (!ep) return false;
         if (a === "info") openEpisodeDetail(meta.id, ep.seasonNumber, ep.episodeNumber, meta);

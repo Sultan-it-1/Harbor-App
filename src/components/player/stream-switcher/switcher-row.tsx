@@ -7,11 +7,7 @@ import type { ScoredStream } from "@/lib/streams/types";
 import { useT } from "@/lib/i18n";
 
 export function streamKey(s: ScoredStream): string {
-  // The play link first: several rows can share one torrent (two debrid links, the files of a
-  // season pack), and a key made of the hash alone made a tap on the second play the first.
-  if (s.url) return `u:${s.url}`;
-  if (s.infoHash) return `h:${s.infoHash.toLowerCase()}:${s.fileIdx ?? ""}`;
-  return `${s.addonId}:${s.title ?? ""}`;
+  return s.infoHash ?? s.url ?? `${s.addonId}:${s.title ?? ""}`;
 }
 
 const FLAG_EMOJI_RX = /[\u{1F1E6}-\u{1F1FF}]{2}/gu;

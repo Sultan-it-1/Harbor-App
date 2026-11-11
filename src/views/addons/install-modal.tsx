@@ -10,7 +10,6 @@ import {
 import { openInstallerViewport } from "@/components/installer-viewport";
 import { isWeb } from "@/lib/platform";
 import { useT } from "@/lib/i18n";
-import { useCloseOnAndroidBack } from "@/lib/use-android-back";
 import type { Addon } from "@/lib/addons";
 
 type Mode =
@@ -47,22 +46,16 @@ export function AddonInstallModal({
   const [installStage, setInstallStage] = useState<InstallStage[] | null>(null);
   const [done, setDone] = useState<{ replaced: boolean; manifest: Addon["manifest"] } | null>(null);
 
-  // While the addon is being saved the pop-up stays (its close button is off too): closing it
-  // then would hide whether the install went through. Escape and Android's back wait for it.
-  const installing = !!installStage && !done;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        if (!installing) onClose();
+        onClose();
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose, installing]);
-  useCloseOnAndroidBack(true, () => {
-    if (!installing) onClose();
-  });
+  }, [onClose]);
 
   const tryResolve = async (rawUrl: string) => {
     setLoading(true);
@@ -176,7 +169,7 @@ export function AddonInstallModal({
           </div>
           <button
             onClick={onClose}
-            disabled={installing}
+            disabled={!!installStage && !done}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-raised text-ink-muted transition-colors hover:bg-canvas/55 hover:text-ink disabled:opacity-40 disabled:hover:bg-raised disabled:hover:text-ink-muted"
             aria-label={t("Close")}
           >

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ScoredStream } from "@/lib/streams/types";
 import type { SourceDescriptor } from "@/lib/together/protocol";
 import { engineP2pEligible } from "@/lib/torrent/stremio-stream";
-import { autoPlayFailedHashes, hasInstantMarker, streamMatchesLangs } from "./picker-utils";
+import { hasInstantMarker, streamMatchesLangs } from "./picker-utils";
 
 const AUTO_SETTLE_MS = 1500;
 const HIGH_CONFIDENCE_GRACE_MS = 350;
@@ -12,8 +12,6 @@ export function useAutoFire(args: {
   autoActive: boolean;
   rememberedHandledFirst?: boolean;
   attempt?: number;
-  /** The title / episode being picked for (autoPlayMediaKey). */
-  mediaKey: string;
   autoCandidates: ScoredStream[];
   resolving: unknown;
   autoAttemptIdx: number;
@@ -33,7 +31,7 @@ export function useAutoFire(args: {
   onPlay: (s: ScoredStream, committed: boolean, skipP2pConfirm?: boolean) => void;
 }): void {
   const {
-    autoActive, rememberedHandledFirst, attempt, mediaKey, autoCandidates, resolving, autoAttemptIdx, autoSettleReady,
+    autoActive, rememberedHandledFirst, attempt, autoCandidates, resolving, autoAttemptIdx, autoSettleReady,
     pipelineDone, firstResultAt, isCached, p2pAutoConsent, preferredLangs, hasStrongAddon, isTorrentioStream,
     expectHostSource, hostSource,
     autoFiredRef, setAutoSettleReady, setAutoCancelled, onPlay,
@@ -93,13 +91,7 @@ export function useAutoFire(args: {
     }
     if (autoCandidates.length === 0) return;
     if (resolving) return;
-    // `attempt` counts every source the player gave up on, and each one takes a place at the
-    // front of the candidates. But a source the player marked dead (a stub) is no longer
-    // among them: leaving a place for it too jumped over a good source that was never tried.
-    const gone = autoPlayFailedHashes(mediaKey).filter(
-      (h) => !autoCandidates.some((s) => s.infoHash?.toLowerCase() === h),
-    ).length;
-    const idx = Math.min(Math.max(0, (attempt ?? 0) - gone) + autoAttemptIdx, autoCandidates.length - 1);
+    const idx = Math.min((attempt ?? 0) + autoAttemptIdx, autoCandidates.length - 1);
     const pick = autoCandidates[idx];
     if (!pick) return;
     const pickInstant = isCached(pick) || !!pick.url || (p2pAutoConsent && engineP2pEligible(pick));
@@ -110,5 +102,5 @@ export function useAutoFire(args: {
     autoFiredRef.current = true;
     const p2pConsentPick = !isCached(pick) && !pick.url && p2pAutoConsent && engineP2pEligible(pick);
     onPlay(pick, p2pConsentPick, p2pConsentPick);
-  }, [autoActive, rememberedHandledFirst, attempt, mediaKey, autoCandidates, resolving, autoAttemptIdx, autoSettleReady, pipelineDone, isCached, preferredLangs, hasStrongAddon, isTorrentioStream, autoFiredRef, setAutoCancelled, onPlay, highConfidenceTick, waitingForHostSource]);
+  }, [autoActive, rememberedHandledFirst, attempt, autoCandidates, resolving, autoAttemptIdx, autoSettleReady, pipelineDone, isCached, preferredLangs, hasStrongAddon, isTorrentioStream, autoFiredRef, setAutoCancelled, onPlay, highConfidenceTick, waitingForHostSource]);
 }

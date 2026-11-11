@@ -16,17 +16,11 @@ export function MatchDetailView({ game }: { game: SportsGame }) {
   useEffect(() => {
     let active = true;
     setLoading(true);
-    fetchMatchSummary(game.league, game.id)
-      .then((res) => {
-        if (!active) return;
-        if (res) setDetail(res);
-        setLoading(false);
-      })
-      // A failed request ends the loading too ("Failed to load match details" shows), instead
-      // of "Loading…" staying up for good.
-      .catch(() => {
-        if (active) setLoading(false);
-      });
+    fetchMatchSummary(game.league, game.id).then((res) => {
+      if (!active) return;
+      if (res) setDetail(res);
+      setLoading(false);
+    });
     return () => { active = false; };
   }, [game]);
 
@@ -91,7 +85,7 @@ export function MatchDetailView({ game }: { game: SportsGame }) {
           { label: "Weight", h: hP.weight, a: aP.weight },
           { label: "Age", h: hP.age, a: aP.age },
           { label: "Reach", h: hP.reach, a: aP.reach },
-          { label: "Stance", h: t(hP.stance), a: t(aP.stance) },
+          { label: t(hP.stance) && "Stance", h: t(hP.stance), a: t(aP.stance) },
         ],
         false,
       );

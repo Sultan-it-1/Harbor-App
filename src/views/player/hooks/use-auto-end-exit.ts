@@ -28,10 +28,9 @@ export function useAutoEndExit(params: {
   }, [src.url]);
 
   useEffect(() => {
-    const naturalEnd = snap.status === "ended";
-    // A live stream often has no duration: its end must still reach the reload below.
-    if (snap.durationSec <= 0 && !(isLive && naturalEnd)) return;
+    if (snap.durationSec <= 0) return;
     const pos = getPlaybackPosition();
+    const naturalEnd = snap.status === "ended";
     const errorAtEnd = snap.errorCode != null && pos >= snap.durationSec - 2;
     const reachedEnd = snap.status !== "playing" && pos >= snap.durationSec - 1;
     if (!naturalEnd && !errorAtEnd && !reachedEnd) return;

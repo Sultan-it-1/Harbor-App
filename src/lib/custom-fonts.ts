@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { t } from "./i18n/translate";
 import { useSettings } from "./settings";
 
 const EXT_FORMAT: Record<string, string> = {
@@ -9,16 +8,7 @@ const EXT_FORMAT: Record<string, string> = {
   woff2: "woff2",
 };
 
-// Fonts are saved inside the settings, in localStorage: about 5 MB for everything the app keeps
-// there, and a font takes a third more than its file as text. Past the quota the settings stop
-// saving, so one font is capped well below it, and all of them together too.
-export const MAX_FONT_BYTES = 1024 * 1024;
-const MAX_FONTS_CHARS = 2 * 1024 * 1024;
-
-/** Whether one more font (as a data URL) still fits next to the saved ones. */
-export function customFontsHaveRoom(fonts: Array<{ dataUrl: string }>, dataUrl: string): boolean {
-  return fonts.reduce((n, f) => n + f.dataUrl.length, dataUrl.length) <= MAX_FONTS_CHARS;
-}
+const MAX_BYTES = 8 * 1024 * 1024;
 
 export function useCustomFonts() {
   const { settings, update } = useSettings();
@@ -31,26 +21,22 @@ export function useCustomFonts() {
     const ext = (file.name.split(".").pop() ?? "").toLowerCase();
     const format = EXT_FORMAT[ext];
     if (!format) {
-      setError(t("Use a TTF, OTF, WOFF or WOFF2 file."));
+      setError("Use a TTF, OTF, WOFF or WOFF2 file.");
       return null;
     }
-    if (file.size > MAX_FONT_BYTES) {
-      setError(t("That font is over {n} MB. Try a lighter file (WOFF2 is the smallest).", { n: 1 }));
+    if (file.size > MAX_BYTES) {
+      setError("That font is over 8 MB. Try a lighter file.");
       return null;
     }
     setBusy(true);
     try {
       const dataUrl = await readDataUrl(file);
-      if (!customFontsHaveRoom(fonts, dataUrl)) {
-        setError(t("No room for another font. Remove one first."));
-        return null;
-      }
       const id = crypto.randomUUID().slice(0, 8);
       await new FontFace(`harbor-font-${id}`, `url(${dataUrl})`, { display: "swap" }).load();
       update({ customFonts: [...fonts, { id, name: prettyName(file.name), dataUrl, format }] });
       return id;
     } catch {
-      setError(t("That file is not a valid font."));
+      setError("That file is not a valid font.");
       return null;
     } finally {
       setBusy(false);

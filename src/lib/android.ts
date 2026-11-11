@@ -36,8 +36,6 @@ type HarborAndroidApi = {
   takeLink?(): string;
   /** Keep screenshots and the Recents preview out of a sensitive screen (PIN, sign-in). */
   setSecure?(on: boolean): void;
-  /** The app's language ("en" / "ar"), for the shell's own texts: the player, notifications. */
-  setLanguage?(lang: string): void;
   /** Ask where to save a file (system "save as" screen). Answer: window.__harborFileSaved(id, "1"|"0"). */
   saveFile?(id: string, name: string, mime: string, base64: string): boolean;
   /** Native screens (android/…/NativeScreens.kt): a page's model, and which page's screen is up
@@ -72,11 +70,7 @@ export type NativePlayerEvent =
   | { type: "requestStreams" }
   | { type: "pickStream"; key: string }
   | { type: "next" }
-  | { type: "subSearch" }
-  /** The viewer's own pick in the native subtitle panel ([lang]: the track's language code). */
-  | { type: "subsChoice"; off: boolean; lang?: string }
-  /** The exact addon subtitle the viewer picked there; it follows that pick's subsChoice. */
-  | { type: "subPicked"; url: string; lang?: string; label?: string };
+  | { type: "subSearch" };
 
 type NativeFetchResult =
   | { ok: true; status: number; url: string; headers: Record<string, string>; body: string }

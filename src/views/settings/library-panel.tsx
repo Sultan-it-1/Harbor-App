@@ -1039,7 +1039,7 @@ function HomeModePicker({
                 selected ? "opacity-0" : "opacity-100 group-hover:opacity-0"
               }`}
             >
-              {t(opt.label)}
+              {opt.label}
             </span>
             <div
               className={`absolute inset-5 z-10 flex flex-col justify-center gap-2 transition-opacity duration-300 ${
@@ -1047,10 +1047,10 @@ function HomeModePicker({
               }`}
             >
               <span className="text-[15px] font-semibold tracking-tight text-ink">
-                {t(opt.label)}
+                {opt.label}
               </span>
               <span className="max-w-[88%] text-[12px] leading-relaxed text-ink-muted">
-                {t(opt.sub)}
+                {opt.sub}
               </span>
             </div>
           </button>
@@ -1094,7 +1094,7 @@ function RetentionPicker({
                   : "bg-raised text-ink-muted hover:bg-elevated hover:text-ink"
               }`}
             >
-              {t(opt.label)}
+              {opt.label}
             </button>
           );
         })}

@@ -30,19 +30,14 @@ export type SeasonDownloadProgress = {
   finished: boolean;
 };
 
-/** The user's debrid services that already hold this stream (cached there, or in their library). */
-function heldBy(s: ScoredStream, debrids: DebridStore[]): DebridStore[] {
-  return debrids.filter((d) => s.cached?.[d.slug] === true || s.inLibrary?.[d.slug] === true);
-}
+const isCached = (s: ScoredStream) => Object.values(s.cached ?? {}).some(Boolean);
 
-/**
- * Streams worth trying for a download, best first: cached on a debrid or a direct link. An
- * uncached torrent is never tried: it can't be saved right now, and asking a debrid for it
- * leaves the torrent queued in the user's account (TorBox, AllDebrid).
- */
-function downloadCandidates(all: ScoredStream[], debrids: DebridStore[]): ScoredStream[] {
+/** Streams worth trying for a download, best first: cached on a debrid or a direct link. */
+function downloadCandidates(all: ScoredStream[]): ScoredStream[] {
   const direct = (s: ScoredStream) => !!s.url && s.url !== "#" && !s.infoHash;
-  return all.filter((s) => heldBy(s, debrids).length > 0 || direct(s)).slice(0, 4);
+  const good = all.filter((s) => isCached(s) || direct(s));
+  const rest = all.filter((s) => !good.includes(s));
+  return [...good, ...rest].slice(0, 4);
 }
 
 export async function downloadSeason(opts: {
@@ -64,16 +59,14 @@ export async function downloadSeason(opts: {
     current: null,
     finished: false,
   };
-  // The list can grow while this runs (a second request for the same season adds what is missing).
-  const emit = () => onProgress({ ...state, total: episodes.length, failed: [...state.failed] });
+  const emit = () => onProgress({ ...state, failed: [...state.failed] });
   emit();
 
   const { addons } = await loadPickerAddons(authKey, settings);
   let imdbId: string | null = meta.id.startsWith("tt") ? meta.id : null;
   if (!imdbId && settings.tmdbKey) imdbId = await tmdbImdbId(settings.tmdbKey, meta.id).catch(() => null);
 
-  for (let i = 0; i < episodes.length; i++) {
-    const ep = episodes[i];
+  for (const ep of episodes) {
     if (signal.aborted) break;
     state.current = ep;
     emit();
@@ -103,10 +96,9 @@ export async function downloadSeason(opts: {
           }),
           signal,
         );
-        for (const s of downloadCandidates(result.picker.all, debrids)) {
+        for (const s of downloadCandidates(result.picker.all)) {
           if (signal.aborted) break;
-          // Only the services that already have it, and not as a "start this torrent" request.
-          const r = await resolveStream(s, heldBy(s, debrids), signal, false);
+          const r = await resolveStream(s, debrids, signal, true);
           if (!r.ok) continue;
           const label =
             [s.resolution, s.source].filter(Boolean).join(" ") || s.parsedTitle || s.title || s.name || s.addonName || null;
@@ -146,8 +138,6 @@ type SeasonJob = {
   key: string;
   title: string;
   season: number | null;
-  /** The queue the job walks through; a second request for the same season appends to it. */
-  episodes: PlayEpisode[];
   progress: SeasonDownloadProgress;
   ac: AbortController;
 };
@@ -252,29 +242,15 @@ export function startSeasonDownload(
   opts: Omit<Parameters<typeof downloadSeason>[0], "signal" | "onProgress">,
 ): void {
   const cur = jobs.get(key);
-  if (cur && !cur.progress.finished) {
-    // The season is already being worked on (the key is the title and season, not the exact
-    // list): add the episodes the running job doesn't have, instead of dropping the request.
-    const missing = opts.episodes.filter(
-      (e) => !cur.episodes.some((x) => x.season === e.season && x.episode === e.episode),
-    );
-    if (missing.length === 0) return;
-    cur.episodes.push(...missing);
-    cur.progress = { ...cur.progress, total: cur.episodes.length };
-    saveJob(key, opts.meta, cur.episodes.slice(cur.progress.done));
-    notifyJobs();
-    return;
-  }
-  const episodes = [...opts.episodes];
-  saveJob(key, opts.meta, episodes);
+  if (cur && !cur.progress.finished) return;
+  saveJob(key, opts.meta, opts.episodes);
   const ac = new AbortController();
   const job: SeasonJob = {
     key,
     title: opts.meta.name ?? "",
-    season: episodes[0]?.season ?? null,
-    episodes,
+    season: opts.episodes[0]?.season ?? null,
     ac,
-    progress: { total: episodes.length, done: 0, queued: 0, skipped: 0, failed: [], current: null, finished: false },
+    progress: { total: opts.episodes.length, done: 0, queued: 0, skipped: 0, failed: [], current: null, finished: false },
   };
   jobs.set(key, job);
   notifyJobs();
@@ -282,12 +258,11 @@ export function startSeasonDownload(
   beginBackgroundJob(bgKey);
   void downloadSeason({
     ...opts,
-    episodes,
     signal: ac.signal,
     onProgress: (p) => {
       job.progress = p;
       // Episodes handled so far (queued, skipped or failed) are done; keep the rest.
-      saveJob(key, opts.meta, episodes.slice(p.done));
+      saveJob(key, opts.meta, opts.episodes.slice(p.done));
       notifyJobs();
     },
   })

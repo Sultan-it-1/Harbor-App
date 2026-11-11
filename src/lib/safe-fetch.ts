@@ -55,6 +55,7 @@ const CORS_OK_HOSTS = new Set([
   "graphql.anilist.co",
   "kitsu.io",
   "kitsu.app",
+  "api.jikan.moe",
   "api.mdblist.com",
   "webservice.fanart.tv",
   "torrentio.strem.fun",
@@ -164,17 +165,12 @@ export const safeFetch: typeof fetch = (input, init) => {
   }
   if (typeof input === "string") {
     // Android app: no /api-proxy server behind us; the native shell does CORS-free HTTP.
-    if (isAndroidApp()) {
-      if (canNativeFetch(init)) {
-        try {
-          if (androidGoesNative(new URL(input))) return androidFetch(input, init);
-        } catch {
-          /* not an absolute URL — fall through */
-        }
+    if (isAndroidApp() && canNativeFetch(init)) {
+      try {
+        if (androidGoesNative(new URL(input))) return androidFetch(input, init);
+      } catch {
+        /* not an absolute URL — fall through */
       }
-      // What the shell doesn't carry (a binary or form-data body, a host with CORS) goes
-      // straight from the WebView, never to /api-proxy: that path doesn't exist in the app.
-      return fetch(input, init);
     }
     const r = rewriteForWeb(input, init);
     return fetch(r.url, r.init);

@@ -1,21 +1,15 @@
 import type { Addon } from "@/lib/addons";
-import { isAndroidApp } from "@/lib/android";
 import { dlog } from "@/lib/debug";
 import type { DebridStore } from "@/lib/debrid/types";
 import { fetchAddonStreams, type StreamRequest } from "./addons";
 import { enhanceAnimeStreams } from "./anitomy";
-import { streamKey } from "./identity";
 import { fetchLibraryStreams, type LibraryQuery } from "./library";
 import { parseStream } from "./parser";
-import { torrentsDisabled } from "@/lib/torrent/stremio-stream";
 import { applyTrust, type Rejection, type TrustOptions } from "./trust";
 import { computeCorpusStats, rankAndPick, scoreStream, type ScoreOptions } from "./scoring";
 import type { ParsedStream, RankedPicker, Stream } from "./types";
 
-// A browser can't decode AC3 or DTS, so the web build picks an AAC source first. The Android
-// player decodes them all, and there the AAC source is usually the weaker one.
-const PREFER_AAC =
-  typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window) && !isAndroidApp();
+const PREFER_AAC = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
 
 const GIB = 1024 ** 3;
 const RESCUABLE_REASON_RX = /^(fresh-cinema-fake|new-release-stub)/;
@@ -67,71 +61,6 @@ function finalizeWithRescue(
   return { picker: newPicker, rejected: rejected.filter((r) => !rescued.has(r.stream)) };
 }
 
-/**
- * The Android app has no torrent engine (and the picker never plays through a remote stream
- * server), so with no debrid service a source that is only an info hash can't play. Those are
- * left out; how many is reported as `p2pOnlyHidden` so the picker can say why it is empty.
- *
- * The same goes anywhere once "Turn torrents off completely" is on: with no debrid service
- * such a source could only play peer-to-peer, which that switch forbids. With a debrid
- * service it stays, because the service can fetch it and nothing is torrented here.
- */
-function dropP2pOnly(
-  parsed: ParsedStream[],
-  debrids: DebridStore[],
-): { playable: ParsedStream[]; hidden: number } {
-  if (debrids.length > 0) return { playable: parsed, hidden: 0 };
-  if (!isAndroidApp() && !torrentsDisabled()) return { playable: parsed, hidden: 0 };
-  const playable = parsed.filter(
-    (s) => !s.infoHash || !!s.url || !!s.ytId || !!s.externalUrl || !!s.nzbUrl,
-  );
-  return { playable, hidden: parsed.length - playable.length };
-}
-
-function isJapanese(lang: string): boolean {
-  const l = lang.trim().toLowerCase();
-  return l === "jp" || l.startsWith("ja");
-}
-
-/**
- * "Require preferred language": sources in another language are set aside as "language-mismatch".
- * Same rules as the picker's language filter: a source with no language tag or a multi-language
- * one passes, Japanese only counts for anime, and when nothing would be left everything is kept
- * (a title never ends up with no sources because of this).
- */
-function applyRequiredLanguage(
-  keep: ParsedStream[],
-  rejected: Rejection[],
-  trust: TrustOptions,
-): { keep: ParsedStream[]; rejected: Rejection[] } {
-  if (!trust.requirePreferredLanguage || trust.disabled) return { keep, rejected };
-  const langs = [
-    ...(trust.preferredLanguages ?? []),
-    ...(trust.preferredAudioLangs ?? []),
-    ...(trust.isAnime ? ["Japanese"] : []),
-  ]
-    .filter((l) => trust.isAnime || !isJapanese(l))
-    .map((l) => l.toLowerCase());
-  if (langs.length === 0) return { keep, rejected };
-  const matches = (s: ParsedStream) =>
-    s.audioLanguages.length === 0 ||
-    s.audioLanguages.includes("Multi") ||
-    s.audioLanguages.some((l) => langs.some((p) => l.toLowerCase() === p || l.toLowerCase().startsWith(p)));
-  const inLanguage = keep.filter(matches);
-  if (inLanguage.length === 0 || inLanguage.length === keep.length) return { keep, rejected };
-  const others = keep.filter((s) => !matches(s)).map((stream) => ({ stream, reason: "language-mismatch" }));
-  return { keep: inLanguage, rejected: [...rejected, ...others] };
-}
-
-/** The trust filter, then the "require preferred language" setting. */
-function applyFilters(
-  parsed: ParsedStream[],
-  trust: TrustOptions,
-): { keep: ParsedStream[]; rejected: Rejection[] } {
-  const { keep, rejected } = applyTrust(parsed, trust);
-  return applyRequiredLanguage(keep, rejected, trust);
-}
-
 export type PipelineInput = {
   request: StreamRequest;
   query: LibraryQuery;
@@ -147,8 +76,6 @@ export type PipelineResult = {
   picker: RankedPicker;
   rejected: Rejection[];
   raw: { addon: Stream[]; library: Stream[] };
-  /** Torrent-only sources left out because nothing here can play them (Android, no debrid service). */
-  p2pOnlyHidden: number;
 };
 
 export async function runPipeline(
@@ -161,13 +88,13 @@ export async function runPipeline(
 
   const buildPartial = (addonStreams: Stream[]): PipelineResult => {
     const merged = mergeAndDedupe(library, addonStreams);
-    const { playable: parsed, hidden } = dropP2pOnly(merged.map(parseStream), input.debrids);
-    const { keep, rejected } = applyFilters(parsed, input.trust ?? {});
+    const parsed = merged.map(parseStream);
+    const { keep, rejected } = applyTrust(parsed, input.trust ?? {});
     const corpus = computeCorpusStats(keep, input.score);
     const scored = keep.map((s) => scoreStream(s, input.score, corpus));
     const picker = rankAndPick(scored, input.score.activeDebrids, PREFER_AAC, input.score.respectAddonOrder === true);
     const fin = finalizeWithRescue(picker, rejected, input.trust ?? {}, input.score);
-    return { picker: fin.picker, rejected: fin.rejected, raw: { addon: addonStreams, library }, p2pOnlyHidden: hidden };
+    return { picker: fin.picker, rejected: fin.rejected, raw: { addon: addonStreams, library } };
   };
 
   const emitPartial = (addonStreams: Stream[]) => {
@@ -196,10 +123,7 @@ export async function runPipeline(
   const addonStreams = addonSettled.status === "fulfilled" ? addonSettled.value : [];
   const merged = mergeAndDedupe(library, addonStreams);
 
-  const { playable: parsed, hidden: p2pOnlyHidden } = dropP2pOnly(merged.map(parseStream), input.debrids);
-  if (p2pOnlyHidden > 0) {
-    dlog(`[pipeline] ${p2pOnlyHidden} torrent-only stream(s) left out: no debrid service, and no torrent engine here or torrents are turned off`);
-  }
+  const parsed = merged.map(parseStream);
 
   if (input.isAnime) {
     await enhanceAnimeStreams(parsed);
@@ -267,9 +191,9 @@ export async function runPipeline(
       dlog(`[pipeline] (core) trust kept ${core.picker.all.length}/${parsed.length} · rejected: ${summary}`);
     }
     const fin = finalizeWithRescue(core.picker, core.rejected, input.trust ?? {}, input.score);
-    return { picker: fin.picker, rejected: fin.rejected, raw: { addon: addonStreams, library }, p2pOnlyHidden };
+    return { picker: fin.picker, rejected: fin.rejected, raw: { addon: addonStreams, library } };
   }
-  const { keep, rejected } = applyFilters(parsed, input.trust ?? {});
+  const { keep, rejected } = applyTrust(parsed, input.trust ?? {});
   if (rejected.length > 0) {
     const byReason = new Map<string, number>();
     for (const r of rejected) {
@@ -286,7 +210,7 @@ export async function runPipeline(
   const scored = keep.map((s) => scoreStream(s, input.score, corpus));
   const picker = rankAndPick(scored, input.score.activeDebrids, PREFER_AAC, input.score.respectAddonOrder === true);
   const fin = finalizeWithRescue(picker, rejected, input.trust ?? {}, input.score);
-  return { picker: fin.picker, rejected: fin.rejected, raw: { addon: addonStreams, library }, p2pOnlyHidden };
+  return { picker: fin.picker, rejected: fin.rejected, raw: { addon: addonStreams, library } };
 }
 
 async function runCorePipeline(
@@ -311,21 +235,12 @@ async function runCorePipeline(
 }
 
 function mergeAndDedupe(library: Stream[], addons: Stream[]): Stream[] {
-  const seen = new Map<string | Stream, Stream>();
-  for (const s of [...library, ...addons]) {
-    const identity = streamKey(s);
-    // Addon tabs filter by the owning installation. Sharing a playback endpoint
-    // must not remove either installation's row, metadata, or native ordering.
-    // (The lists that arrive while addons are still answering are not deduplicated
-    // where they are fetched, so the same rule is applied here.)
-    const key =
-      typeof identity === "string" ? JSON.stringify([s.addonUrl, s.addonId, identity]) : identity;
-    const prior = seen.get(key);
-    if (!prior) {
-      seen.set(key, { ...s, contributors: [{ id: s.addonId, name: s.addonName }] });
-    } else if (s.sources?.length) {
-      prior.sources = [...new Set([...(prior.sources ?? []), ...s.sources])];
-    }
+  const out: Stream[] = [];
+  for (const s of library) {
+    out.push({ ...s, contributors: [{ id: s.addonId, name: s.addonName }] });
   }
-  return [...seen.values()];
+  for (const s of addons) {
+    out.push({ ...s, contributors: [{ id: s.addonId, name: s.addonName }] });
+  }
+  return out;
 }

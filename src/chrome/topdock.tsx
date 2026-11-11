@@ -66,9 +66,6 @@ export function TopDock() {
     .filter(
       (tab) =>
         (tab.view !== "vod" || settings.showPlaylistsTab) &&
-        // Content filters (Settings): Anime and Live TV leave the navigation when hidden.
-        !(tab.view === "anime" && settings.hideContent.anime) &&
-        !(tab.view === "live" && settings.hideContent.liveTv) &&
         (!tab.parentalKey || !locked || !hiddenTabs[tab.parentalKey]),
     )
     .map((tab) => {

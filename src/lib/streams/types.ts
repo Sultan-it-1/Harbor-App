@@ -120,9 +120,6 @@ export type ParsedStream = Stream & {
   yearRange: [number, number] | null;
   season: number | null;
   episode: number | null;
-  /** Last episode in the file: the same as `episode`, or one more for a double episode
-   *  (S01E01-E02). Null when no episode number was found. */
-  episodeEnd: number | null;
   seasonPack: boolean;
   discIndex: number | null;
   repackIteration: number;

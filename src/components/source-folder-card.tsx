@@ -7,7 +7,6 @@ import { Pencil, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { EditFolderImagesModal } from "./edit-folder-images-modal";
 import { useT } from "@/lib/i18n";
-import { useCloseOnAndroidBack } from "@/lib/use-android-back";
 import { useSettings } from "@/lib/settings";
 import { tmdbDiscover, tmdbCollection } from "@/lib/providers/tmdb";
 import { fetchTraktList } from "@/lib/trakt/lists";
@@ -33,9 +32,6 @@ export function SourceFolderCard({
   const [errorAddon, setErrorAddon] = useState<string | null>(null);
   const [missingTmdbKey, setMissingTmdbKey] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  // The two notices below have no key handling of their own: Android's back closes them.
-  useCloseOnAndroidBack(!!errorAddon, () => setErrorAddon(null));
-  useCloseOnAndroidBack(missingTmdbKey, () => setMissingTmdbKey(false));
 
   const handleClick = async () => {
     if (loading) return;
@@ -202,7 +198,7 @@ export function SourceFolderCard({
     </button>
 
     {errorAddon && createPortal(
-      <div role="dialog" aria-modal="true"
+      <div
         className="pointer-events-auto fixed inset-0 z-[120] flex items-center justify-center bg-black/72 backdrop-blur-md animate-in fade-in duration-200"
         onClick={(e) => {
           if (e.target === e.currentTarget) setErrorAddon(null);
@@ -238,7 +234,7 @@ export function SourceFolderCard({
     )}
 
     {missingTmdbKey && createPortal(
-      <div role="dialog" aria-modal="true"
+      <div
         className="pointer-events-auto fixed inset-0 z-[120] flex items-center justify-center bg-black/72 backdrop-blur-md animate-in fade-in duration-200"
         onClick={(e) => {
           if (e.target === e.currentTarget) setMissingTmdbKey(false);

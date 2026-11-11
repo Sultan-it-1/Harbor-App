@@ -1,6 +1,5 @@
 import { parse } from "parse-torrent-title";
 import type { DebridSlug, DebridStore, LibraryEntry } from "@/lib/debrid/types";
-import { episodeSpanContains, parseEpisodeSpan } from "./episode-span";
 import type { Stream } from "./types";
 
 export type LibraryQuery = {
@@ -60,11 +59,7 @@ function checkText(
     return null;
   }
   if (query.season != null && ptt.season != null && ptt.season !== query.season) return null;
-  if (query.episode != null && ptt.episode != null && ptt.episode !== query.episode) {
-    // A double-episode file (S01E01-E02) also holds the second episode.
-    const span = parseEpisodeSpan(text);
-    if (!span || !episodeSpanContains(span, query.season ?? span.season, query.episode)) return null;
-  }
+  if (query.episode != null && ptt.episode != null && ptt.episode !== query.episode) return null;
   if (query.type === "series" && (query.season != null || query.episode != null)) {
     if (ptt.season == null && ptt.episode == null) return null;
   }

@@ -2,6 +2,7 @@ import type { Meta } from "@/lib/cinemeta";
 import type { Settings } from "@/lib/settings";
 import { recentlyPlayed, watchTitleKey } from "@/lib/playback-history";
 import { tmdbDiscover, tmdbTrending } from "@/lib/providers/tmdb";
+import { fetchAwardWinners } from "./award-winners";
 import { localizeFloor } from "./locale";
 import { getDownvotedIds, getUpvotedIds } from "./preferences";
 import { rankMetasByAffinity } from "./rank";
@@ -70,9 +71,6 @@ async function runRow(
   page: number,
 ): Promise<Meta[]> {
   if (row.endpoint === "awards") {
-    // Loaded on demand: the awards history behind it is 424 KB of data that the first screen
-    // doesn't need.
-    const { fetchAwardWinners } = await import("./award-winners");
     return fetchAwardWinners(tmdbKey, page);
   }
   const params = { ...floor, page: String(page) };

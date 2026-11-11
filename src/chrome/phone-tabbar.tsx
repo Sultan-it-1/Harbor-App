@@ -45,47 +45,6 @@ const MORE: Item[] = [
   { view: "settings", label: "Settings", icon: (a) => <SettingsIcon active={a} /> },
 ];
 
-/**
- * True while a pop-up is open over the page: anything marked aria-modal, except this bar's own
- * More sheet (it opens under the bar on purpose). The bar is drawn above most pop-ups, so it
- * covered their bottom edge and its tabs still worked underneath; it steps aside instead. A
- * pop-up inside a page that is kept but not shown has no size and does not count.
- */
-function useModalOpen(): boolean {
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    let raf = 0;
-    const check = () => {
-      raf = 0;
-      let found = false;
-      for (const el of document.querySelectorAll('[aria-modal="true"]:not([data-phone-sheet])')) {
-        const r = el.getBoundingClientRect();
-        if (r.width > 0 && r.height > 0) {
-          found = true;
-          break;
-        }
-      }
-      setOpen(found);
-    };
-    const schedule = () => {
-      if (!raf) raf = requestAnimationFrame(check);
-    };
-    const observer = new MutationObserver(schedule);
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["aria-modal", "hidden", "class", "style"],
-    });
-    check();
-    return () => {
-      observer.disconnect();
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, []);
-  return open;
-}
-
 /** Phone navigation: a native-style bottom tab bar instead of the desktop sidebar. */
 export function PhoneTabBar() {
   const { view, setView } = useView();
@@ -94,7 +53,6 @@ export function PhoneTabBar() {
   const { settings } = useSettings();
   const t = useT();
   const [moreOpen, setMoreOpen] = useState(false);
-  const modalOpen = useModalOpen();
   // A new version of the app: a dot on More and on Settings (the update is on the Settings page).
   const update = useAndroidUpdate();
   const updateWaiting = update.status === "available";
@@ -139,9 +97,7 @@ export function PhoneTabBar() {
   const go = (it: Item) => {
     setMoreOpen(false);
     setSearchOpen(false);
-    // Settings asks for the PIN whenever the profile is locked, as the desktop sidebar does: the
-    // locks themselves are changed from there.
-    if (locked && (it.view === "settings" || (it.parentalKey && hiddenTabs[it.parentalKey]))) {
+    if (it.parentalKey && locked && hiddenTabs[it.parentalKey]) {
       setPinFor(it.view);
       return;
     }
@@ -155,7 +111,7 @@ export function PhoneTabBar() {
   return (
     <>
       {moreOpen && (
-        <div role="dialog" aria-modal="true" data-phone-sheet className="fixed inset-0 z-[180] flex flex-col justify-end bg-black/55" onClick={() => setMoreOpen(false)}>
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-[180] flex flex-col justify-end bg-black/55" onClick={() => setMoreOpen(false)}>
           <div
             className="rounded-t-3xl border-t border-edge bg-surface px-4 pt-3"
             style={{ paddingBottom: `calc(${PHONE_TABBAR_H + 12}px + env(safe-area-inset-bottom))` }}
@@ -213,12 +169,11 @@ export function PhoneTabBar() {
       )}
 
       {/* Solid, no backdrop blur: the bar never leaves the screen and a blur behind it is
-          redrawn on every scrolled frame. Under a pop-up it is only made invisible, so it keeps
-          its place and the native screens' room for it does not change. */}
+          redrawn on every scrolled frame. */}
       <nav
         data-phone-tabbar
         hidden={keyboardUp}
-        className={`fixed inset-x-0 bottom-0 z-[190] border-t border-edge-soft bg-canvas/[0.98] ${modalOpen ? "invisible" : ""}`}
+        className="fixed inset-x-0 bottom-0 z-[190] border-t border-edge-soft bg-canvas/[0.98]"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         <div className="mx-auto flex max-w-xl items-stretch justify-around" style={{ height: PHONE_TABBAR_H }}>

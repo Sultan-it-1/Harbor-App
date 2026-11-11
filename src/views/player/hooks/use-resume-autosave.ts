@@ -62,7 +62,7 @@ export function useResumeAutosave(params: {
     const pos = getPlaybackPosition() || lastGoodPosRef.current;
     if (pos < MIN_POSITION_SEC) return;
     lastSavedRef.current = pos * 1000;
-    saveResumeMs(id, pos * 1000, se, ep, sn.durationSec * 1000);
+    saveResumeMs(id, pos * 1000, se, ep);
     if (isExternalPlaylistId(id)) return;
     if (s.streamRef) {
       savePlayback(id, { ...s.streamRef, url: s.url, title: s.meta.name }, se, ep);

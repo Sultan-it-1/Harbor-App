@@ -222,7 +222,7 @@ function CustomManager({
   }, [query, tmdbKey]);
 
   return (
-    <div role="dialog" aria-modal="true"
+    <div
       className="fixed inset-0 z-[120] flex items-center justify-center bg-canvas/85 p-6 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();

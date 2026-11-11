@@ -3,7 +3,6 @@ import { usePlaybackPosition } from "@/lib/player/playback-clock";
 import { SkipPill } from "@/components/player/skip-pill";
 import { activeSegment, type SkipSegment } from "@/lib/skip-intro";
 import { useSettings } from "@/lib/settings";
-import { isAndroidApp } from "@/lib/android";
 import type { SpoilerMask } from "@/lib/spoilers";
 import type { PlayEpisode } from "@/lib/view";
 
@@ -66,9 +65,6 @@ export function SkipPillContainer({
     autoSkippedRef.current = null;
   }, [skipSegments]);
   useEffect(() => {
-    // Android app: the native player has the segments and skips intros itself (it also shows
-    // "Intro skipped"); doing it here too would seek twice.
-    if (isAndroidApp()) return;
     if (!allowAutoSkip || !realActiveSkip) return;
     const wantSkip = realActiveSkip.kind === "intro" && settings.autoSkipIntro;
     if (!wantSkip) return;

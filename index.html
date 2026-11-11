@@ -13,7 +13,7 @@
         document.write('<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">');
       }
     </script>
-    <meta name="theme-color" content="#160717" />
+    <meta name="theme-color" content="#000000" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Harbor" />
@@ -23,6 +23,11 @@
     <meta name="referrer" content="no-referrer" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="manifest" href="/manifest.json" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Harbor" />
+    <link rel="apple-touch-icon" href="/favicon.png" />
+    <meta name="theme-color" content="#0d0d0d" />
     <script>
       if ('serviceWorker' in navigator && !window.HarborAndroid) {
         window.addEventListener('load', () => {
@@ -63,10 +68,8 @@
       })();
     </script>
     <style>
-      /* The default theme's canvas (--color-canvas in src/index.css): the first frame and the
-         splash already have the app's colour, so nothing flashes when the page takes over. */
       html, body, #root {
-        background: #160717;
+        background: #0a0a0a;
         color-scheme: dark;
         margin: 0;
         height: 100%;
@@ -77,7 +80,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background: #160717;
+        background: #0a0a0a;
         z-index: 9999;
         pointer-events: none;
         transition: opacity 280ms ease-out;

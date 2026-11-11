@@ -13,9 +13,6 @@ import type { PlayerSrc, PlayEpisode } from "@/lib/view";
 import { BLACK_SCREEN_GRACE_MS, MAX_AUTORETRY_ATTEMPTS, ROOM_STALL_MS, SLOW_LOAD_MS, STUCK_AUTORETRY_MS } from "../player-utils";
 import { GENUINE_FAILURE_WINDOW_MS, type EngineStats } from "@/lib/torrent/engine-stats";
 import { isSwappedSource } from "@/lib/player/swap-state";
-import { isAndroidApp } from "@/lib/android";
-import type { LiveSource } from "./use-stream-switcher";
-import { autoPlayMediaKey, noteAutoPlayFailure } from "@/views/play-picker/picker-utils";
 
 type OpenPicker = (
   meta: Meta,
@@ -26,9 +23,6 @@ type OpenPicker = (
 export function useAutoRetry(params: {
   bridgeRef: RefObject<PlayerBridge | null>;
   src: PlayerSrc;
-  /** The source playing right now (the in-player switcher may have replaced the first one):
-   *  what a reload has to load, or it would go back to the source the player opened with. */
-  liveSourceRef: RefObject<LiveSource>;
   snap: PlayerSnapshot;
   stremioServerTranscode: boolean;
   instantPlay: boolean;
@@ -40,7 +34,7 @@ export function useAutoRetry(params: {
   isP2pEngine: boolean;
   engineStats: EngineStats | null;
 }) {
-  const { bridgeRef, src, liveSourceRef, snap, stremioServerTranscode, instantPlay, inRoom, debrids, selfFrameReadyRef, openPicker, engineFailure, isP2pEngine, engineStats } = params;
+  const { bridgeRef, src, snap, stremioServerTranscode, instantPlay, inRoom, debrids, selfFrameReadyRef, openPicker, engineFailure, isP2pEngine, engineStats } = params;
   const isLocal = isLocalUrl(src.url);
   const isLive = src.meta.id.startsWith("iptv:");
   const ENGINE_FIRST_FRAME_GRACE_MS = 20_000;
@@ -101,17 +95,16 @@ export function useAutoRetry(params: {
     const timer = window.setTimeout(() => {
       liveRetryCountRef.current = attempt;
       console.warn(`[player] live auto-reconnect attempt ${attempt}/2`);
-      const cur = liveSourceRef.current;
       void b.load({
-        url: cur.url,
-        subtitles: cur.subtitles,
-        notWebReady: cur.notWebReady,
+        url: src.url,
+        subtitles: src.subtitles,
+        notWebReady: src.notWebReady,
         isLive: true,
-        headers: cur.headers,
+        headers: src.headers,
       });
     }, 4000);
     return () => window.clearTimeout(timer);
-  }, [isLive, snap.errorCode, src.url, src.subtitles, src.notWebReady, bridgeRef, liveSourceRef]);
+  }, [isLive, snap.errorCode, src.url, src.subtitles, src.notWebReady, bridgeRef]);
 
   const triggerAutoRetry = useCallback(
     (reason: string) => {
@@ -145,7 +138,6 @@ export function useAutoRetry(params: {
       if (nextAttempt >= 2) {
         clearOnePickerCache(src.meta, src.episode);
       }
-      noteAutoPlayFailure(autoPlayMediaKey(src.meta.id, src.episode), currentAttempt, src.streamRef?.infoHash);
       openPicker(
         src.meta,
         src.episode,
@@ -154,7 +146,7 @@ export function useAutoRetry(params: {
           : { autoPlay: false },
       );
     },
-    [src.attempt, src.meta, src.episode, src.streamRef, openPicker, instantPlay, isLocal, isLive, inRoom, src.url, src.subtitles, src.notWebReady, bridgeRef],
+    [src.attempt, src.meta, src.episode, openPicker, instantPlay, isLocal, isLive, inRoom, src.url, src.subtitles, src.notWebReady, bridgeRef],
   );
 
   useEffect(() => {
@@ -166,21 +158,17 @@ export function useAutoRetry(params: {
     }
     if (getPlaybackPosition() > 5) return;
     if (isP2pEngine && !engineFailure && Date.now() - urlAtRef.current < ENGINE_FIRST_FRAME_GRACE_MS) return;
-    const cur = liveSourceRef.current;
-    const failoverHash = cur.streamRef?.infoHash;
+    const failoverHash = src.streamRef?.infoHash;
     if (failoverHash && debrids.length > 0 && !debridFailoverTriedRef.current) {
       debridFailoverTriedRef.current = true;
-      const cached = Object.fromEntries((cur.streamRef?.cachedSlugs ?? []).map((s) => [s, true]));
+      const cached = Object.fromEntries((src.streamRef?.cachedSlugs ?? []).map((s) => [s, true]));
       const ac = new AbortController();
-      void resolveViaDebrids(failoverHash, cur.streamRef?.fileIdx ?? undefined, cached, debrids, ac.signal, false).then(
+      void resolveViaDebrids(failoverHash, src.streamRef?.fileIdx ?? undefined, cached, debrids, ac.signal, false).then(
         async (r) => {
           const b = bridgeRef.current;
           if (r.ok && b) {
             let url = r.data.url;
-            // Android: the native player sends the headers itself (no local proxy there, so
-            // asking for one always failed and the link was played without its headers).
-            const nativeHeaders = isAndroidApp() ? r.data.headers : undefined;
-            if (!nativeHeaders && r.data.headers && Object.keys(r.data.headers).length > 0) {
+            if (r.data.headers && Object.keys(r.data.headers).length > 0) {
               try {
                 url = (await registerStreamProxy(r.data.url, r.data.headers)).url;
               } catch {
@@ -188,7 +176,7 @@ export function useAutoRetry(params: {
               }
             }
             console.warn(`[player] debrid failover via ${r.via}`);
-            void b.load({ url, subtitles: cur.subtitles, notWebReady: r.data.notWebReady ?? cur.notWebReady, headers: nativeHeaders });
+            void b.load({ url, subtitles: src.subtitles, notWebReady: r.data.notWebReady ?? src.notWebReady });
           } else {
             triggerAutoRetry(`playback error "${snap.errorCode}"`);
           }
@@ -202,11 +190,11 @@ export function useAutoRetry(params: {
       if (b) {
         console.warn(`[player] error "${snap.errorCode}" before playback — reloading same URL`);
         void b.load({
-          url: cur.url,
-          subtitles: cur.subtitles,
-          notWebReady: cur.notWebReady,
+          url: src.url,
+          subtitles: src.subtitles,
+          notWebReady: src.notWebReady,
           isLive,
-          headers: cur.headers,
+          headers: src.headers,
         });
         return;
       }
@@ -244,7 +232,6 @@ export function useAutoRetry(params: {
     src.subtitles,
     src.notWebReady,
     bridgeRef,
-    liveSourceRef,
     isP2pEngine,
     engineFailure,
   ]);
@@ -356,12 +343,6 @@ export function useAutoRetry(params: {
   useEffect(() => {
     if (snap.status === "ended") return;
     if (isP2pEngine && !engineFailure) return;
-    // A source the viewer picked by hand is not given up on after a short wait: a slow
-    // debrid link or a big file can need longer than this to open, and leaving the player
-    // then looked like an error when nothing had failed. The short timer is only for
-    // automatic play (and rooms), where the next source is tried without asking. A real
-    // player error still ends a hand-picked source through the error handling above.
-    if (!instantPlay && !inRoom) return;
     if (snap.durationSec > 0 || getPlaybackPosition() > 1) return;
     const t = window.setTimeout(() => {
       if (snap.durationSec === 0 && getPlaybackPosition() === 0) {
@@ -369,7 +350,7 @@ export function useAutoRetry(params: {
       }
     }, STUCK_AUTORETRY_MS);
     return () => window.clearTimeout(t);
-  }, [src.url, snap.durationSec, snap.status, triggerAutoRetry, isP2pEngine, engineFailure, instantPlay, inRoom]);
+  }, [src.url, snap.durationSec, snap.status, triggerAutoRetry, isP2pEngine, engineFailure]);
 
   useEffect(() => {
     if (!inRoom || isLocal || isLive) return;

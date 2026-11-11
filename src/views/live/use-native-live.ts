@@ -1,16 +1,13 @@
 // Android: Live TV drawn natively (see @/views/native/native-screens), in the page's layout.
 //
-// The bar: the playlist button, the search field, Home / Grid / Guide and, in the grid, the
-// categories. The playlists, the categories and the leagues ("Customize") open as the screen's
-// own menus (built in ../live.tsx); the page's picker, drawer and window open over the screen,
-// which steps aside, only for what needs them: adding, editing or managing playlists, managing
-// categories, or when a native menu is not available. Home: "Your TV at 21:40", the spotlight
-// (one channel at a time), On now as posters, Live & Upcoming games with their leagues, On now
-// as guide cards, the rails of channels now, Browse by country, then a rail per category ("See
-// all" opens it in the grid). Grid: the networks, then every channel's card (more as it
-// scrolls). Guide: the timeline of channels and their programmes (a tap plays the channel, or a
-// past programme where the channel has catch-up). An error shows with "Try again". Multiview,
-// and Live TV before any playlist is added, stay the page's.
+// The bar: the playlist button (the page's own menu of playlists opens over the screen while the
+// native screen steps aside), the search field, Home / Grid / Guide and, in the grid, the
+// categories (the page's drawer opens over the screen). Home: "Your TV at 21:40", the spotlight
+// (one channel at a time), On now as posters, Live & Upcoming games with their leagues
+// (Customize opens the page's window), On now as guide cards, the rails of channels now, Browse
+// by country, then a rail per category ("See all" opens it in the grid). Grid: the networks,
+// then every channel's card (more as it scrolls). The Guide's timeline and an error's own
+// buttons stay the page's.
 
 import { useEffect, useMemo, useState } from "react";
 import type { Meta } from "@/lib/cinemeta";

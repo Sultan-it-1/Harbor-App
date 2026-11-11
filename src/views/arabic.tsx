@@ -3,7 +3,7 @@ import { BackToTop } from "@/components/back-to-top";
 import { FeedShelf } from "@/components/feed-shelf";
 import { LazyMount } from "@/components/lazy-mount";
 import { ScrollRootContext } from "@/components/row";
-import { ARABIC_ROWS, arabicRowTitle } from "@/lib/arabic";
+import { ARABIC_ROWS } from "@/lib/arabic";
 import { isRtl, useT, useUiLanguage } from "@/lib/i18n";
 import { useSettings } from "@/lib/settings";
 import { useScrollMemory } from "@/lib/view";
@@ -43,7 +43,7 @@ export function ArabicHub({ active = true }: { active?: boolean }) {
           {ARABIC_ROWS.map((def) => (
             <LazyMount key={def.id} minHeight={340}>
               <FeedShelf
-                shelf={{ id: def.id, title: arabicRowTitle(def), kicker: def.english }}
+                shelf={{ id: def.id, title: t(def.titleKey), kicker: def.english }}
                 items={rows[def.id] ?? null}
                 scrollKey={`arabic:${def.id}`}
                 onEndReached={() => loadMore(def.id)}

@@ -46,11 +46,6 @@ export function useCalendarData({
     setError(null);
   }
 
-  // The custom calendar's filters as one text, so the effect below runs again when any of them
-  // changes (people, genres, services, countries, media types, the Trakt extras) and only then:
-  // the lists themselves are new objects on every settings change, whatever was edited.
-  const customFilters = source === "custom" ? JSON.stringify(settings.customCalendar) : "";
-
   useEffect(() => {
     let cancelled = false;
     setError(null);
@@ -142,7 +137,9 @@ export function useCalendarData({
     simklConnected,
     settings.tmdbKey,
     settings.region,
-    customFilters,
+    settings.customCalendar.trackedPeople,
+    settings.customCalendar.includeTraktAnticipated,
+    settings.customCalendar.includeTraktWatchlist,
     year,
     month,
   ]);

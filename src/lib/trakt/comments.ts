@@ -43,34 +43,19 @@ type RawComment = {
   };
 };
 
-const traktIdOfTmdb = new Map<string, string>();
-
-/**
- * The id for a Trakt path. Trakt takes an IMDb id, a slug or its own number there, not a TMDB
- * id: a title only known by its TMDB id is looked up first. Empty when there is none.
- */
-async function pathId(target: TraktTarget): Promise<string> {
-  const ids = target.kind === "episode" ? target.show.ids : target.ids;
+function pickId(ids: { tmdb?: number; imdb?: string }): string {
   if (ids.imdb) return ids.imdb;
-  if (ids.slug) return ids.slug;
-  if (ids.trakt) return String(ids.trakt);
-  if (!ids.tmdb) return "";
-  const type = target.kind === "movie" ? "movie" : "show";
-  const key = `${type}:${ids.tmdb}`;
-  const known = traktIdOfTmdb.get(key);
-  if (known) return known;
-  const found = await traktRequest<Array<{ movie?: { ids?: TraktIds }; show?: { ids?: TraktIds } }>>(
-    `/search/tmdb/${ids.tmdb}?type=${type}`,
-  ).catch(() => []);
-  const trakt = found[0]?.[type]?.ids?.trakt;
-  if (!trakt) return "";
-  traktIdOfTmdb.set(key, String(trakt));
-  return String(trakt);
+  if (ids.tmdb) return `tmdb:${ids.tmdb}`;
+  return "";
 }
 
-export async function commentsPath(target: TraktTarget, sort: string): Promise<string | null> {
-  const id = await pathId(target);
-  if (!id) return null;
+function showPath(target: TraktTarget): string {
+  if (target.kind === "episode") return pickId(target.show.ids);
+  return pickId(target.ids);
+}
+
+export function commentsPath(target: TraktTarget, sort: string): string {
+  const id = showPath(target);
   if (target.kind === "episode") {
     return `/shows/${id}/seasons/${target.season}/episodes/${target.number}/comments/${sort}`;
   }
@@ -105,9 +90,7 @@ export async function fetchComments(
   page = 1,
   limit = 20,
 ): Promise<TraktComment[]> {
-  const base = await commentsPath(target, sort);
-  if (!base) return [];
-  const path = base + `?extended=images&page=${page}&limit=${limit}`;
+  const path = commentsPath(target, sort) + `?extended=images&page=${page}&limit=${limit}`;
   const raw = await traktRequest<RawComment[]>(path).catch(() => [] as RawComment[]);
   return raw.map(mapComment);
 }
@@ -132,27 +115,15 @@ export async function deleteComment(id: number): Promise<void> {
 }
 
 
-/** The ids Trakt can find a title by in a request body. */
-function bodyIds(ids: TraktIds): TraktIds | null {
-  const out: TraktIds = {};
-  if (ids.trakt) out.trakt = ids.trakt;
-  if (ids.slug) out.slug = ids.slug;
-  if (ids.imdb) out.imdb = ids.imdb;
-  if (ids.tmdb) out.tmdb = ids.tmdb;
-  return Object.keys(out).length > 0 ? out : null;
-}
-
-async function subjectBody(target: TraktTarget) {
-  if (target.kind !== "episode") return { [target.kind]: { ids: bodyIds(target.ids) ?? {} } };
-  // A comment on an episode needs the episode's own id. The show's ids would put the comment
-  // on the wrong item (or nowhere), so the episode is looked up first.
-  const show = await pathId(target);
-  if (!show) throw new Error("No Trakt ID available for this show");
-  const episode = await traktRequest<{ ids?: TraktIds }>(
-    `/shows/${show}/seasons/${target.season}/episodes/${target.number}`,
-  );
-  if (!episode.ids?.trakt) throw new Error("No Trakt ID available for this episode");
-  return { episode: { ids: { trakt: episode.ids.trakt } } };
+function subjectBody(target: TraktTarget) {
+  const ids: Record<string, string | number> = {};
+  const src = target.kind === "episode"
+    ? (target as { ids?: { tmdb?: number; imdb?: string } }).ids ?? (target as { show: { ids: { tmdb?: number; imdb?: string } } }).show.ids
+    : target.ids;
+  if (src.tmdb) ids.tmdb = src.tmdb;
+  if (src.imdb) ids.imdb = src.imdb;
+  const key = target.kind === "episode" ? "episode" : target.kind;
+  return { [key]: { ids } };
 }
 
 export async function postComment(
@@ -165,7 +136,7 @@ export async function postComment(
     spoiler,
     review: false,
     share: false,
-    ...(await subjectBody(target)),
+    ...subjectBody(target),
   };
   const raw = await traktRequest<RawComment>("/comments?extended=images", {
     method: "POST",
@@ -175,9 +146,8 @@ export async function postComment(
   return mapComment(raw);
 }
 
-export async function ratingPath(target: TraktTarget): Promise<string | null> {
-  const id = await pathId(target);
-  if (!id) return null;
+export function ratingPath(target: TraktTarget): string {
+  const id = showPath(target);
   if (target.kind === "episode") {
     return `/shows/${id}/seasons/${target.season}/episodes/${target.number}/rating`;
   }
@@ -185,34 +155,29 @@ export async function ratingPath(target: TraktTarget): Promise<string | null> {
   return `/shows/${id}/rating`;
 }
 
-/**
- * The body for /sync/ratings (and its /remove, with no rating). Any id Trakt knows works, not
- * only a TMDB one. An episode has no ids of its own here: it is named by its show, season and
- * number.
- */
-function ratingsBody(target: TraktTarget, rating?: number): Record<string, unknown> | null {
-  const rated = rating == null ? {} : { rating };
+function syncIds(target: TraktTarget): { tmdb?: number } | null {
   if (target.kind === "episode") {
-    const ids = bodyIds(target.show.ids);
-    if (!ids) return null;
-    return {
-      shows: [{ ids, seasons: [{ number: target.season, episodes: [{ number: target.number, ...rated }] }] }],
-    };
+    const epIds = (target as { ids?: TraktIds }).ids;
+    return epIds?.tmdb ? { tmdb: epIds.tmdb } : null;
   }
-  const ids = bodyIds(target.ids);
-  if (!ids) return null;
-  return { [target.kind === "movie" ? "movies" : "shows"]: [{ ...rated, ids }] };
+  return target.ids?.tmdb ? { tmdb: target.ids.tmdb } : null;
+}
+
+function syncType(target: TraktTarget): string {
+  return target.kind === "episode" ? "episodes" : target.kind === "movie" ? "movies" : "shows";
 }
 
 export async function rateContent(target: TraktTarget, rating: number): Promise<void> {
-  const body = ratingsBody(target, rating);
-  if (!body) throw new Error("No ID available for rating");
+  const ids = syncIds(target);
+  if (!ids) throw new Error("No TMDB ID available for rating");
+  const body = { [syncType(target)]: [{ rating, ids }] };
   await traktRequest("/sync/ratings", { method: "POST", authed: true, body });
 }
 
 export async function removeRating(target: TraktTarget): Promise<void> {
-  const body = ratingsBody(target);
-  if (!body) throw new Error("No ID available for rating");
+  const ids = syncIds(target);
+  if (!ids) throw new Error("No TMDB ID available for rating");
+  const body = { [syncType(target)]: [{ ids }] };
   await traktRequest("/sync/ratings/remove", { method: "POST", authed: true, body });
 }
 

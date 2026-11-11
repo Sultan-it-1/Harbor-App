@@ -8,7 +8,6 @@ import { parseAudio } from "./parser-audio";
 import { parseLanguages } from "./parser-language";
 import { parseCacheFlags } from "./parser-cache-flags";
 import { extractFilenameLine } from "./parser-filename";
-import { parseEpisodeSpan } from "../episode-span";
 import {
   computeScamScore,
   parseAnimeHash,
@@ -54,12 +53,6 @@ export function parseStream(stream: Stream): ParsedStream {
   const yearRange = parseYearRange(text);
   const season = ptt.season ?? null;
   const episode = ptt.episode ?? null;
-  // A double episode (S01E01-E02, S01E01E02) is one file holding two episodes; the title
-  // parser only reports the first. The second is taken from the explicit notation, and only
-  // when it agrees with what the title parser found, so nothing else about the result moves.
-  const span = parseEpisodeSpan(filenameLine || text);
-  const episodeEnd =
-    span && span.season === season && span.episode === episode ? span.episodeEnd : episode;
   const seasonPack = parseSeasonPack(text, ptt);
   const discIndex = parseDisc(text);
   const repackIteration = parseRepackIteration(text, ptt);
@@ -91,7 +84,6 @@ export function parseStream(stream: Stream): ParsedStream {
     yearRange,
     season,
     episode,
-    episodeEnd,
     seasonPack,
     discIndex,
     repackIteration,

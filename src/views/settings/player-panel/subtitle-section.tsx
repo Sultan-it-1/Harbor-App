@@ -1,7 +1,6 @@
 import { Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import godfatherStill from "@/assets/godfather-offer.svg";
-import { MAX_FONT_BYTES, customFontsHaveRoom } from "@/lib/custom-fonts";
 import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
 import { ColorPopoverTrigger } from "../color-picker";
@@ -381,6 +380,7 @@ const PRESET_FONTS: Array<{ id: "inter" | "system" | "rounded" | "serif" | "arab
 ];
 
 const FONT_ACCEPT = ".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2,application/x-font-ttf,application/x-font-otf,application/font-woff,application/font-woff2";
+const MAX_FONT_BYTES = 4 * 1024 * 1024;
 
 function FontPicker() {
   const { settings, update } = useSettings();
@@ -398,10 +398,8 @@ function FontPicker() {
 
   const onFile = async (file: File) => {
     setError(null);
-    // The same limits as Settings > Theme > fonts: fonts are saved inside the settings, and a
-    // big one filled the storage until nothing else could be saved.
     if (file.size > MAX_FONT_BYTES) {
-      setError(t("That font is over {n} MB. Try a lighter file (WOFF2 is the smallest).", { n: 1 }));
+      setError(`That font is ${(file.size / (1024 * 1024)).toFixed(1)} MB. Max is 4 MB.`);
       return;
     }
     const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
@@ -422,10 +420,6 @@ function FontPicker() {
         r.onerror = () => reject(r.error);
         r.readAsDataURL(file);
       });
-      if (!customFontsHaveRoom(customFonts, dataUrl)) {
-        setError(t("No room for another font. Remove one first."));
-        return;
-      }
       const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
       const baseName = file.name.replace(/\.(ttf|otf|woff2?|ttc)$/i, "");
       const next = [

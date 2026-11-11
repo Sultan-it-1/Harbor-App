@@ -18,7 +18,6 @@ import { ExtLink, KeyField, Section, ToggleRow } from "./shared";
 import { ManualAddonCard, ServiceCard } from "./streaming-panel";
 import { AioStatusModal } from "./aiostatus-modal";
 import { useT } from "@/lib/i18n";
-import { torrentEngineAvailable } from "@/lib/torrent/stremio-stream";
 
 export type DebridKey = "rd" | "tb" | "ad" | "pm" | "dl";
 
@@ -109,26 +108,6 @@ export function StreamingSourcesPanel({
         <p className="mt-3 rounded-xl border border-edge-soft bg-canvas/40 px-4 py-3 text-[12.5px] leading-relaxed text-ink-muted">
           {t("Using AIOStreams or another aggregator addon? Its own sorting and filtering happen inside the addon before Harbor ever sees the results, then Harbor applies the stream filter and result order above on top. If results look thinner than expected, keep one side permissive: either relax the addon's internal filters or set Harbor's stream filter to Balanced or Off.")}
         </p>
-      </Section>
-
-      <Section
-        title={t("Source mode")}
-        subtitle={t("Which kinds of sources the picker lists. When the kind you choose has nothing for a title, everything is shown instead.")}
-      >
-        <StreamModePicker
-          value={settings.streamMode}
-          onChange={(v) => update({ streamMode: v })}
-        />
-        {/* Only where there is a torrent engine to turn off: on the phone torrents never play
-            peer-to-peer, and without a debrid service they are hidden already. */}
-        {torrentEngineAvailable() && (
-          <ToggleRow
-            label={t("Turn torrents off completely")}
-            sub={t("Nothing is played peer-to-peer, and sources that could only play that way are hidden. Debrid services and direct links keep working.")}
-            value={settings.torrentsDisabled}
-            onChange={(v) => update({ torrentsDisabled: v })}
-          />
-        )}
       </Section>
 
       <Section
@@ -411,75 +390,6 @@ function StreamSortPicker({
     <div className="flex flex-col gap-2.5">
       {options.map((opt) => {
         const selected = value === opt.id;
-        return (
-          <button
-            key={opt.id}
-            type="button"
-            onClick={() => onChange(opt.id)}
-            className={`flex items-start gap-3.5 rounded-2xl border px-5 py-4 text-start transition-colors ${
-              selected
-                ? "border-ink bg-elevated"
-                : "border-edge-soft bg-canvas/40 hover:border-edge hover:bg-canvas/60"
-            }`}
-          >
-            <span
-              className={`mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
-                selected ? "border-ink" : "border-edge"
-              }`}
-            >
-              {selected && <span className="h-2.5 w-2.5 rounded-full bg-ink" />}
-            </span>
-            <div className="flex min-w-0 flex-1 flex-col gap-1">
-              <span className="text-[15px] font-semibold text-ink">{opt.label}</span>
-              <span className="text-[12.5px] leading-snug text-ink-muted">{opt.sub}</span>
-            </div>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-type StreamModeId = "both" | "addons" | "p2p";
-
-function StreamModePicker({
-  value,
-  onChange,
-}: {
-  value: StreamModeId;
-  onChange: (v: StreamModeId) => void;
-}) {
-  const t = useT();
-  // "Torrents only" is offered where torrents can play (the desktop app). Without a torrent
-  // engine the picker treats it as "All sources", so it is not offered there, and a value
-  // saved elsewhere shows as "All sources".
-  const canTorrent = torrentEngineAvailable();
-  const shown: StreamModeId = value === "p2p" && !canTorrent ? "both" : value;
-  const options: Array<{ id: StreamModeId; label: string; sub: string }> = [
-    {
-      id: "both",
-      label: t("All sources"),
-      sub: t("Default. Everything your addons and debrid services return."),
-    },
-    {
-      id: "addons",
-      label: t("Direct and debrid only"),
-      sub: t("Leaves out raw torrents that are not ready on a debrid service. Direct links and sources already cached on your debrid stay."),
-    },
-    ...(canTorrent
-      ? [
-          {
-            id: "p2p" as const,
-            label: t("Torrents only"),
-            sub: t("Only raw torrents, played peer-to-peer."),
-          },
-        ]
-      : []),
-  ];
-  return (
-    <div className="flex flex-col gap-2.5">
-      {options.map((opt) => {
-        const selected = shown === opt.id;
         return (
           <button
             key={opt.id}

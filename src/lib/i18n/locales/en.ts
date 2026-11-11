@@ -60,7 +60,7 @@ const en: Record<string, string> = {
   "welcome.dismiss": "Get started",
 
   "arabic.hub.title": "Arabic",
-  "arabic.row.ramadan": "Ramadan {year} Series",
+  "arabic.row.ramadan": "Ramadan 2026 Series",
   "arabic.row.drama": "Arabic Drama",
   "arabic.row.movies": "Arabic Movies",
   "arabic.row.classics": "Egyptian Cinema Classics",

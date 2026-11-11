@@ -7,30 +7,10 @@ import {
   type BadgeKind,
 } from "@/components/format-badge";
 import type { Meta } from "@/lib/cinemeta";
-import { streamKey } from "@/lib/streams/identity";
 import type { Rejection } from "@/lib/streams/trust";
 import type { Addon } from "@/lib/addons";
 import type { ScoredStream, Stream, Tier } from "@/lib/streams/types";
 import type { PlayEpisode } from "@/lib/view";
-
-// Auto-play working through a title's sources ("this one failed, try the next") counts its
-// tries in `attempt`. The torrents the player gave up on along the way are kept here, so the
-// picker can tell which of them are no longer in its list (see use-auto-fire).
-let autoPlayFailed: { media: string; hashes: string[] } | null = null;
-
-export function autoPlayMediaKey(metaId: string, episode?: PlayEpisode | null): string {
-  return `${metaId}|${episode?.season ?? ""}|${episode?.episode ?? ""}`;
-}
-
-/** The player gave up on a source (its try number `attempt`) and asks the picker for the next. */
-export function noteAutoPlayFailure(media: string, attempt: number, infoHash: string | null | undefined): void {
-  if (attempt === 0 || autoPlayFailed?.media !== media) autoPlayFailed = { media, hashes: [] };
-  if (infoHash) autoPlayFailed.hashes.push(infoHash.toLowerCase());
-}
-
-export function autoPlayFailedHashes(media: string): string[] {
-  return autoPlayFailed?.media === media ? autoPlayFailed.hashes : [];
-}
 
 export async function cinemetaImdbFallback(
   name: string,
@@ -490,43 +470,33 @@ export function humanError(code: string): string {
   }
 }
 
-/** What a row plays, in the same terms the fetch uses to tell duplicates apart
- *  (streams/identity.ts): the play URL first, then the torrent and file. A row with no
- *  playback target at all falls back to its text so it still has a stable key. */
-function playbackIdentity(s: Stream): string {
-  const key = streamKey(s);
-  return typeof key === "string" ? key : `t:${s.title ?? s.name ?? ""}`;
-}
-
-/** One row of one addon installation. Two installations of the same addon (same manifest
- *  id, different configuration URL) get different keys, and so do two rows of one addon
- *  that share a torrent but play different URLs. */
-export function streamIdentity(s: Stream): string {
-  return JSON.stringify([s.addonUrl ?? "", s.addonId, playbackIdentity(s)]);
-}
-
-/** The same row without the installation: only for a scored stream that lost its addonUrl
- *  on the way (stampAddonOrder puts it back from the raw list). */
-function looseIdentity(s: Stream): string {
-  return JSON.stringify([s.addonId, playbackIdentity(s)]);
+function streamIdentity(s: {
+  addonId: string;
+  infoHash?: string;
+  fileIdx?: number;
+  url?: string;
+  title?: string;
+  name?: string;
+}): string {
+  const base = s.infoHash
+    ? `h:${s.infoHash}:${s.fileIdx ?? ""}`
+    : `u:${s.url ?? s.title ?? s.name ?? ""}`;
+  return `${s.addonId}:${base}`;
 }
 
 export function stampAddonOrder(streams: ScoredStream[], rawAddon: Stream[]): void {
   if (rawAddon.length === 0) return;
   const arrival = new Map<string, number>();
   const byIdentity = new Map<string, Stream>();
-  const looseFirst = new Map<string, string>();
   rawAddon.forEach((s, i) => {
     const k = streamIdentity(s);
     if (!arrival.has(k)) {
       arrival.set(k, i);
       byIdentity.set(k, s);
     }
-    const loose = looseIdentity(s);
-    if (!looseFirst.has(loose)) looseFirst.set(loose, k);
   });
   for (const s of streams) {
-    const k = s.addonUrl ? streamIdentity(s) : (looseFirst.get(looseIdentity(s)) ?? streamIdentity(s));
+    const k = streamIdentity(s);
     const idx = arrival.get(k);
     if (idx !== undefined) s.nativeIdx = idx;
     const raw = byIdentity.get(k);

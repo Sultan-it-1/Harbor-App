@@ -127,11 +127,6 @@ export type Settings = {
   stremioServerTranscode: boolean;
   directTorrentStream: boolean;
   p2pAutoConsent: boolean;
-  /** Nothing is played peer-to-peer and sources that could only play that way are hidden. */
-  torrentsDisabled: boolean;
-  /** Which kinds of sources the picker lists: everything, only direct/debrid ones, or only
-   *  raw torrents. A choice that would leave a title with nothing shows everything. */
-  streamMode: "both" | "addons" | "p2p";
   streamCacheRetentionHours: number;
   streamCacheDir: string;
   remoteStreamServerUrl: string;
@@ -165,11 +160,8 @@ export type Settings = {
   preferEmbeddedSubs: boolean;
   betaUpdates: boolean;
   autoSkipIntro: boolean;
-  /** Look up intro/credits times online (sends the title's id, season and episode to
-   *  TheIntroDB, SkipDB and introdb.app, and anime episodes to AniSkip / AniZip). */
+  /** Look up intro/credits times online (sends the title's id to TheIntroDB / AniSkip). */
   skipLookups: boolean;
-  /** Optional personal TheIntroDB API key, sent as a Bearer token. Empty: no key is sent. */
-  theIntroDbKey: string;
   trackBlockWords: string[];
   forcedSubsWhenNativeAudio: boolean;
   tmdbLanguage: string;

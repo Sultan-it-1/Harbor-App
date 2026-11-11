@@ -12,16 +12,13 @@ import type { DebridStore } from "@/lib/debrid/types";
 import { androidApi, isAndroidApp } from "@/lib/android";
 import { PLACEHOLDER_MAX_SEC, setSwapState } from "@/lib/player/swap-state";
 import { formatStreamQuality } from "@/views/play-picker/picker-utils";
-// "t" is a trial in this file.
-import { t as tr } from "@/lib/i18n";
 
 let checkShownThisSession = false;
 
 /** How long a just-picked source gets to start for real before going back. */
 const TRIAL_MS = 40_000;
 
-/** What the player needs to load a source again. */
-export type LiveSource = {
+type LiveSource = {
   url: string;
   headers?: Record<string, string>;
   subtitles?: PlayerSrc["subtitles"];
@@ -156,10 +153,10 @@ export function useStreamSwitcher(params: {
           cmd: "streamFailed",
           message:
             why === "placeholder"
-              ? tr("This source is not ready on your debrid, so you are back on the one you were watching. Ready sources are marked ⚡")
+              ? "هذا المصدر مو جاهز في الديبريد، رجّعتك للمصدر اللي كنت عليه. المصادر الجاهزة عليها ⚡"
               : why === "timeout"
-                ? tr("This source did not start, so you are back on the one you were watching")
-                : tr("This source did not play, so you are back on the one you were watching"),
+                ? "هذا المصدر ما بدأ، رجّعتك للمصدر اللي كنت عليه"
+                : "هذا المصدر ما اشتغل، رجّعتك للمصدر اللي كنت عليه",
         }),
       );
       const b = bridgeRef.current;
@@ -297,7 +294,6 @@ export function useStreamSwitcher(params: {
     swapResolvingKey,
     liveUrl,
     liveStreamRef,
-    liveSourceRef: liveRef,
     pickAnother,
     onSwitchStream,
   };

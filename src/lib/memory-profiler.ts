@@ -1,5 +1,3 @@
-import { isAndroidApp } from "./android";
-import { downloadText as saveTextFile } from "./download-text";
 import { getNativeMem, getRamTier } from "./native-memory";
 
 type MemoryStats = {
@@ -267,12 +265,6 @@ function buildDumpText(): string {
 }
 
 function downloadText(text: string, filename: string): void {
-  // The Android WebView ignores <a download>: the report was never written there. The shared
-  // helper asks the system where to save it.
-  if (isAndroidApp()) {
-    void saveTextFile(filename, text, ["txt"]);
-    return;
-  }
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

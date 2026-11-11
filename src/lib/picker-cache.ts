@@ -47,11 +47,7 @@ export function setPickerCache(
   configHash: string,
 ): void {
   if (result.picker.all.length === 0) return;
-  const stripped: StoredResult = {
-    picker: result.picker,
-    rejected: result.rejected.slice(0, 60),
-    p2pOnlyHidden: result.p2pOnlyHidden,
-  };
+  const stripped: StoredResult = { picker: result.picker, rejected: result.rejected.slice(0, 60) };
   lruSet(cache, entryKey(meta, episode), {
     meta,
     episode,

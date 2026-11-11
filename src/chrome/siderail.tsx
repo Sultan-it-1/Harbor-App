@@ -59,9 +59,6 @@ export function SideRail() {
     tabs.filter(
       (item) =>
         (item.view !== "vod" || settings.showPlaylistsTab) &&
-        // Content filters (Settings): Anime and Live TV leave the navigation when hidden.
-        !(item.view === "anime" && settings.hideContent.anime) &&
-        !(item.view === "live" && settings.hideContent.liveTv) &&
         (!item.parentalKey || !locked || !hiddenTabs[item.parentalKey]),
     );
 

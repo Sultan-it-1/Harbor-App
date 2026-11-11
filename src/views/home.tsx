@@ -28,10 +28,8 @@ import { useSettings, type StreamingService } from "@/lib/settings";
 import { trackEvent } from "@/lib/discover";
 import { publishResumeStates } from "@/lib/hover-preview/store";
 import { readResumeEntry, saveResumeBatch } from "@/lib/resume";
-import { dedupeCwItems } from "@/lib/cw-dedupe";
 import { dismissCw, isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import { clearLocalCw, listLocalCw, localCwVersion, subscribeLocalCw } from "@/lib/local-cw";
-import { manualWatchedVersion, subscribeManualWatched } from "@/lib/manual-watched";
 import { repairLibraryNames } from "@/lib/stremio-repair";
 import {
   cwSortKey,
@@ -44,7 +42,6 @@ import {
 import { useTrakt } from "@/lib/trakt/provider";
 import { buildTraktHomeRows } from "@/lib/trakt/home-rails";
 import { fetchWatchedKeySet } from "@/lib/trakt/history";
-import { fetchTraktPlaybackItems } from "@/lib/trakt/playback";
 import { recentlyPlayed, subscribePlayback, type WatchedSet } from "@/lib/playback-history";
 import { detectAnimeForCw, useDetectedAnimeVersion } from "@/lib/anime-detect";
 import { buildSimklHomeRows } from "@/lib/simkl/home-rails";
@@ -89,7 +86,6 @@ export function Home({ active = true }: { active?: boolean }) {
   const [traktRows, setTraktRows] = useState<HomeRow[]>([]);
   const [simklRows, setSimklRows] = useState<HomeRow[]>([]);
   const [simklCw, setSimklCw] = useState<LibraryItem[]>([]);
-  const [traktCw, setTraktCw] = useState<LibraryItem[]>([]);
   const [traktWatched, setTraktWatched] = useState<Set<string>>(() => new Set());
   const [localWatched, setLocalWatched] = useState<WatchedSet>(() => recentlyPlayed());
   useEffect(() => subscribePlayback(() => setLocalWatched(recentlyPlayed())), []);
@@ -269,28 +265,7 @@ export function Home({ active = true }: { active?: boolean }) {
     };
   }, [simklConnected]);
 
-  // What is paused on Trakt joins Continue Watching, as Simkl's does. Connected is the only
-  // switch there is for Trakt on Home (its rows have no other).
-  useEffect(() => {
-    if (!traktConnected) {
-      setTraktCw([]);
-      return;
-    }
-    let cancelled = false;
-    fetchTraktPlaybackItems()
-      .then((cw) => {
-        if (!cancelled) setTraktCw(cw);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [traktConnected]);
-
   const trackedRef = useRef<Set<string>>(new Set());
-  // The last library that arrived, and whose it was. It outlives the effect below, which runs
-  // again every time Home is shown or left: that alone is no reason to fetch it all again.
-  const libraryLoadedRef = useRef({ authKey: "", at: 0 });
   useEffect(() => {
     if (!authKey) {
       setItems([]);
@@ -301,15 +276,12 @@ export function Home({ active = true }: { active?: boolean }) {
     // on every return to the app. Refresh at most every 2 minutes on return, and poll every 5.
     const phone = isPhoneLayout();
     const minGapMs = phone ? 2 * 60_000 : 0;
-    const loaded = libraryLoadedRef.current;
-    const fresh = loaded.authKey === authKey && Date.now() - loaded.at < minGapMs;
-    let lastLoadAt = fresh ? loaded.at : 0;
+    let lastLoadAt = 0;
     const load = () => {
       lastLoadAt = Date.now();
       library(authKey)
         .then((libItems) => {
           if (cancelled) return;
-          libraryLoadedRef.current = { authKey, at: Date.now() };
           setItems(libItems);
           const importKey = `harbor.discover.libImported.${user?._id ?? "anon"}`;
           let importedSince = 0;
@@ -357,7 +329,7 @@ export function Home({ active = true }: { active?: boolean }) {
         })
         .catch(console.error);
     };
-    if (!fresh) load();
+    load();
     if (active) {
       const refresh = () => {
         if (document.visibilityState === "visible" && Date.now() - lastLoadAt >= minGapMs) load();
@@ -381,9 +353,7 @@ export function Home({ active = true }: { active?: boolean }) {
 
   const localCwVer = useSyncExternalStore(subscribeLocalCw, localCwVersion);
   const animeDetectVer = useDetectedAnimeVersion();
-  // An episode marked watched can bring its series into the row (see isCwMember).
-  const manualWatchedVer = useSyncExternalStore(subscribeManualWatched, manualWatchedVersion);
-  const cwDeduped = useMemo(() => {
+  const continueWatching = useMemo(() => {
     const localCwItems: LibraryItem[] = listLocalCw().map((e) => ({
       _id: e.id,
       type: e.type,
@@ -407,31 +377,37 @@ export function Home({ active = true }: { active?: boolean }) {
       _mtime: new Date(e.t).toISOString(),
       local: true,
     }));
-    // "Up Next" and the air date are added by this page. An older version sent them to the
-    // Stremio cloud with a removed card: read back from there they mean nothing.
-    const cloudItems = items.map((i) =>
-      i.upNext || i.waitingForAir ? { ...i, upNext: undefined, waitingForAir: undefined, nextAirDate: undefined } : i,
-    );
-    const eligible = [...cloudItems, ...simklCw, ...traktCw, ...localCwItems]
+    const eligible = [...items, ...simklCw, ...localCwItems]
       .filter(
         (i) =>
           (i.type as string) !== "other" &&
           !i._id.startsWith("iptv:") &&
           !isCwDismissed(i) &&
-          isCwMember(i, { advancing: settings.cwAdvanceNext }) &&
+          isCwMember(i) &&
           !(settings.animeOnlyInAnimeRoom && isAnimeCwItem(i)),
       )
       .map((i) => ({ i, k: cwSortKey(i) }))
       .sort((a, b) => b.k - a.k)
       .map((e) => e.i);
-    // One card per title, whichever sources it came from (and whatever id each knows it by).
-    return dedupeCwItems(eligible, 100);
-  }, [items, simklCw, traktCw, localCwVer, cwVersion, settings.animeOnlyInAnimeRoom, settings.cwAdvanceNext, animeDetectVer, manualWatchedVer]);
-  const continueWatching = cwDeduped.items;
-  // The copies each card stands for, read when a card is removed.
-  const cwAbsorbedRef = useRef(cwDeduped.absorbed);
-  cwAbsorbedRef.current = cwDeduped.absorbed;
-  const cwItems = useCwAdvance(continueWatching, settings.tmdbKey, settings.cwAdvanceNext, traktWatched);
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "").trim();
+    const ns = (id: string) => (id.startsWith("tt") ? "tt" : id.split(":")[0]);
+    const seenId = new Set<string>();
+    const seenKey = new Map<string, { ns: string; vid: string }>();
+    const out: typeof eligible = [];
+    for (const i of eligible) {
+      if (seenId.has(i._id)) continue;
+      const key = `${i.type}:${norm(i.name ?? "")}`;
+      const kept = seenKey.get(key);
+      const vid = i.state?.video_id ?? "";
+      if (kept !== undefined && kept.ns !== ns(i._id) && kept.vid === vid) continue;
+      seenId.add(i._id);
+      if (kept === undefined) seenKey.set(key, { ns: ns(i._id), vid });
+      out.push(i);
+      if (out.length >= 100) break;
+    }
+    return out;
+  }, [items, simklCw, localCwVer, cwVersion, settings.animeOnlyInAnimeRoom, animeDetectVer]);
+  const cwItems = useCwAdvance(continueWatching, settings.tmdbKey, settings.cwAdvanceNext);
 
   useEffect(() => {
     void detectAnimeForCw(items);
@@ -443,16 +419,8 @@ export function Home({ active = true }: { active?: boolean }) {
 
   const onDismissCw = useCallback(
     (item: LibraryItem) => {
-      // Every card is marked removed, and the device's own entry for the id goes too: before, a
-      // Stremio card removed here came back as its local copy.
-      dismissCw(item, authKey);
-      clearLocalCw(item._id);
-      // The card stood for these copies too (the same title from another source): left alone,
-      // one of them would take its place.
-      for (const copy of cwAbsorbedRef.current.get(item._id) ?? []) {
-        dismissCw(copy, authKey);
-        clearLocalCw(copy._id);
-      }
+      if (item.local) clearLocalCw(item._id);
+      else dismissCw(item, authKey);
     },
     [authKey],
   );

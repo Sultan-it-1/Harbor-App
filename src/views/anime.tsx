@@ -4,7 +4,6 @@ import { AnimeGenrePicker } from "@/components/anime-genre-picker";
 import { AnimeHero } from "@/components/anime-hero";
 import { BackToTop } from "@/components/back-to-top";
 import { ContinueCard } from "@/components/continue-card";
-import { dedupeCwItems } from "@/lib/cw-dedupe";
 import { dismissCw, isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import { PickCard } from "@/components/pick-card";
 import { Row, ScrollRootContext } from "@/components/row";
@@ -261,16 +260,22 @@ export function AnimeView({ active = true }: { active?: boolean }) {
 
   const animeDetectVer = useDetectedAnimeVersion();
   const continueWatching = useMemo(() => {
-    const sorted = [...libItems, ...simklCw]
-      .filter((i) => isCwMember(i) && isAnimeCwItem(i) && !isCwDismissed(i))
+    const seen = new Set<string>();
+    return [...libItems, ...simklCw]
+      .filter((i) => {
+        if (!isCwMember(i)) return false;
+        if (!isAnimeCwItem(i)) return false;
+        if (isCwDismissed(i)) return false;
+        if (seen.has(i._id)) return false;
+        seen.add(i._id);
+        return true;
+      })
       .sort(
         (a, b) =>
           Date.parse(b.state?.lastWatched ?? b._mtime) -
           Date.parse(a.state?.lastWatched ?? a._mtime),
-      );
-    // One card a title, as on Home: the same show can sit in the library under its IMDb id and
-    // come from Simkl under its Kitsu id.
-    return dedupeCwItems(sorted, 20).items;
+      )
+      .slice(0, 20);
   }, [libItems, simklCw, cwVersion, animeDetectVer]);
 
   useEffect(() => {

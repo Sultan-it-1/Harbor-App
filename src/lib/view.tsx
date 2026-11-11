@@ -279,9 +279,6 @@ function lastOfKind<K extends Frame["kind"]>(
 
 export function ViewProvider({ children }: { children: ReactNode }) {
   const [stack, setStack] = useState<Frame[]>([{ kind: "home" }]);
-  // The stack as last rendered, for checks that must not run inside a state updater.
-  const stackRef = useRef(stack);
-  stackRef.current = stack;
   const [chromeHidden, setChromeHidden] = useState(false);
   const [homeResetTick, setHomeResetTick] = useState(0);
   const scrollMem = useRef<Map<string, ScrollSnapshot>>(new Map());
@@ -579,13 +576,10 @@ export function ViewProvider({ children }: { children: ReactNode }) {
         setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
         return;
       }
-      // Counted here, not in the updater below: React may run an updater twice, and the event
-      // notifies other components, which must not happen while this one renders.
-      const top = stackRef.current[stackRef.current.length - 1];
-      if (!(top?.kind === "meta" && top.meta.id === m.id)) trackEvent(m.id, "open", profileFromMeta(m));
       setStack((cur) => {
         const t = cur[cur.length - 1];
         if (t.kind === "meta" && t.meta.id === m.id) return cur;
+        trackEvent(m.id, "open", profileFromMeta(m));
         return pushFrame(cur, {
           kind: "meta",
           meta: m,
@@ -703,13 +697,9 @@ export function ViewProvider({ children }: { children: ReactNode }) {
       if (opts?.autoPlay && getWindowFullscreen()) suppressFullscreenExitOnce();
       setStack((cur) => {
         const t = cur[cur.length - 1];
-        // Same title, same episode, same attempt: already on top. Another episode of the same
-        // title is a different picker and must open.
         if (
           t.kind === "picker" &&
           t.meta.id === m.id &&
-          (t.episode?.season ?? null) === (ep?.season ?? null) &&
-          (t.episode?.episode ?? null) === (ep?.episode ?? null) &&
           (t.attempt ?? 0) === (opts?.attempt ?? 0) &&
           (t.intent ?? "play") === (opts?.intent ?? "play")
         ) {

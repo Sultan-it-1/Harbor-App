@@ -453,22 +453,14 @@ export function useNativeAddons(o: {
           pills: starPills(hero.resolved.manifest?.id, t),
           title: c.title,
           subtitle: t(c.subtitle),
-          button: !inst
-            ? { id: "btn", label: t("Get"), style: "ink" }
-            : armed === hero.entry.id
-              ? { id: "btn", label: t("Tap again to remove"), style: "danger", icon: "x" }
-              : { id: "btn", label: t("Installed"), style: "installed" },
+          button: inst ? { id: "btn", label: t("Installed"), style: "installed" } : { id: "btn", label: t("Get"), style: "ink" },
           link: t("View details"),
           from: g?.[0] ?? null,
           to: g?.[1] ?? null,
         },
         (what) => {
-          if (what !== "btn") return o.onOpen(hero.entry.id);
-          if (!inst) return void o.onInstall(hero.resolved);
-          // Same as every other "Installed" button here: the first tap asks, the second removes.
-          if (armed !== hero.entry.id) return setArmed(hero.entry.id);
-          setArmed(null);
-          void o.onUninstall(hero.resolved);
+          if (what === "btn") void (inst ? o.onUninstall(hero.resolved) : o.onInstall(hero.resolved));
+          else o.onOpen(hero.entry.id);
         },
       );
     }
@@ -563,15 +555,6 @@ export function useNativeAddons(o: {
       api.items.forEach((a, i) => communityRow(a, i, { isNew: o.browseMode === "new" && isNewlyAdded(a.createdAt), last: i === api.items.length - 1 && !api.exhausted }));
       if (api.loading) {
         rows.push({ key: "ad-more", title: "", kind: "action", metas: [], cards: [{ title: t("Loading…"), busy: true, tone: "plain" }] });
-      } else if (api.failed) {
-        rows.push({
-          key: "ad-retry",
-          title: "",
-          kind: "action",
-          metas: [],
-          cards: [{ title: t("Couldn't load the addons. Check your connection."), sub: t("Try again"), icon: "alert", tone: "plain" }],
-          onOpen: () => void api.retry(),
-        });
       } else if (api.exhausted && api.items.length > 0) {
         panel("ad-end", { look: "plain", body: t("You've reached the end · {n} addons", { n: api.items.length }) });
       }

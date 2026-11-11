@@ -8,7 +8,6 @@ import { saveResumeMs } from "@/lib/resume";
 import type { PartialSyncState } from "@/lib/together/provider";
 import { useView, type PlayerSrc, type PlayerStreamRef } from "@/lib/view";
 import { MAX_AUTORETRY_ATTEMPTS } from "../player-utils";
-import { autoPlayMediaKey, noteAutoPlayFailure } from "@/views/play-picker/picker-utils";
 
 const REMEMBER_MIN_SEC = 30;
 
@@ -61,7 +60,7 @@ export function usePlayerExit(params: {
     const pos = getPlaybackPosition();
     const placeholder = isSwapOnTrial() || (!!durationSec && durationSec > 0 && durationSec < PLACEHOLDER_MAX_SEC);
     if (Number.isFinite(pos) && pos > 0 && !placeholder) {
-      saveResumeMs(src.meta.id, pos * 1000, season, episode, durationSec ? durationSec * 1000 : undefined);
+      saveResumeMs(src.meta.id, pos * 1000, season, episode);
       if (liveStreamRef && pos >= REMEMBER_MIN_SEC) {
         savePlayback(
           src.meta.id,
@@ -105,7 +104,6 @@ export function usePlayerExit(params: {
       return;
     }
     if (nextAttempt >= 2) clearOnePickerCache(src.meta, src.episode);
-    noteAutoPlayFailure(autoPlayMediaKey(src.meta.id, src.episode), src.attempt ?? 0, src.streamRef?.infoHash);
     openPicker(
       src.meta,
       src.episode,

@@ -203,43 +203,6 @@ export function groupChannels(channels: IptvChannel[]): Map<string, IptvChannel[
   return map;
 }
 
-const EPG_HEADER_ATTRS = ["url-tvg", "x-tvg-url", "tvg-url"];
-
-/**
- * The guide (XMLTV) addresses a playlist names for itself on its first line, e.g.
- * `#EXTM3U url-tvg="https://example.com/guide.xml.gz"`. Several players' spellings are
- * accepted, one attribute may list several addresses separated by commas, and an address
- * relative to the playlist is resolved against `baseUrl`. Only http(s) results are returned.
- */
-export function readM3uHeaderEpgUrls(text: string, baseUrl?: string): string[] {
-  // Only the first line matters; never split a playlist of many megabytes to read it.
-  const head = text.slice(0, 8192).replace(/^\uFEFF/, "").trimStart();
-  const header = head.split(/\r?\n/, 1)[0]?.trim() ?? "";
-  if (!/^#EXTM3U(?:\s|$)/i.test(header)) return [];
-  const urls: string[] = [];
-  for (const name of EPG_HEADER_ATTRS) {
-    // Quoted either way, or bare (some panels write url-tvg=http://... with no quotes).
-    const re = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"']+))`, "gi");
-    for (const match of header.matchAll(re)) {
-      for (const raw of (match[1] ?? match[2] ?? match[3] ?? "").split(",")) {
-        const url = resolveHttpUrl(raw.trim(), baseUrl);
-        if (url && !urls.includes(url)) urls.push(url);
-      }
-    }
-  }
-  return urls;
-}
-
-function resolveHttpUrl(value: string, baseUrl?: string): string | null {
-  if (!value) return null;
-  try {
-    const url = new URL(value, baseUrl);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
-  } catch {
-    return null;
-  }
-}
-
 export function deriveEpgFromGetPhp(playlistUrl: string): string | null {
   const urls = deriveEpgUrls(playlistUrl);
   return urls[0] ?? null;
