@@ -6,9 +6,9 @@ package app.harbor.android
  * The first subtitle is whatever it is with one subtitle (a track inside the file, or one from
  * the addons or saved on the device). The second always comes from the addons or the saved ones
  * and has a view of its own. They are laid out in one of two ways:
+ *  - stacked (the default): the second right above the first, both at full width;
  *  - side by side: both at the bottom, each in its own half of the width, so the picture is
- *    covered as little as possible;
- *  - stacked: the second right above the first, both at full width.
+ *    covered as little as possible.
  *
  * Nothing in here touches an Android view, so it is unit-tested on the JVM (DualSubsTest).
  * NativePlayer.layoutSubtitles asks [plan] and [pad] and applies the answers.

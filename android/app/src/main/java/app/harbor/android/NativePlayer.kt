@@ -194,9 +194,9 @@ class NativePlayer(
     /** The second subtitle picked for this episode the last time it played (play's
      *  "restoreSub2"), until it has been put back. */
     private var restore2Url: String? = null
-    /** How two subtitles are laid out (saved on the device): stacked, or side by side with the
-     *  sides swapped or not. */
-    private var dualStacked = false
+    /** How two subtitles are laid out (saved on the device): stacked (the layout a viewer who
+     *  has never chosen gets), or side by side with the sides swapped or not. */
+    private var dualStacked = true
     private var dualSwapped = false
     /** Which of the two the "Look and timing" tab is editing. */
     private var editSecond = false
@@ -329,7 +329,8 @@ class NativePlayer(
         }
         subStyle2 = SubStyle.load(activity, SubStyle.PREFS_SECOND) ?: SubStyle.secondDefault()
         activity.getSharedPreferences("harbor.player", Context.MODE_PRIVATE).let { prefs ->
-            dualStacked = prefs.getString("dualLayout", null) == DualSubs.STACKED
+            // Stacked unless side by side was chosen.
+            dualStacked = prefs.getString("dualLayout", null) != DualSubs.SIDE_BY_SIDE
             dualSwapped = prefs.getBoolean("dualSwap", false)
         }
         if (pickingStream != null) {
@@ -1549,8 +1550,8 @@ class NativePlayer(
         if (secondId != null) {
             p.section(Strings.dualLayout)
             p.chips(listOf(
-                Triple(Strings.sideBySide, !dualStacked) { setDualLayout(stacked = false) },
                 Triple(Strings.stacked, dualStacked) { setDualLayout(stacked = true) },
+                Triple(Strings.sideBySide, !dualStacked) { setDualLayout(stacked = false) },
             ))
             if (!dualStacked) {
                 val state = subState()
