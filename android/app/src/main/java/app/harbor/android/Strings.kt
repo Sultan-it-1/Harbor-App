@@ -234,7 +234,7 @@ object Strings {
     /** Two subtitles that can both be synced: which one. */
     val syncWhich get() = t(
         "Each subtitle has its own sync. Choose the one to line up with the sound; the other is hidden meanwhile.",
-        "لكل ترجمة مزامنتها. اختر اللي تضبطها مع الصوت، والثانية تختفي مؤقتاً.",
+        "لكل ترجمة مزامنتها. اختر اللي تضبطها مع الصوت، والأخرى تختفي مؤقتاً.",
     )
     val syncFirstSubtitle get() = t("Sync the first subtitle", "مزامنة الترجمة الأولى")
     val syncSecondSubtitle get() = t("Sync the second subtitle", "مزامنة الترجمة الثانية")

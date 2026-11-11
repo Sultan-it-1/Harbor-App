@@ -79,13 +79,15 @@ object DualSubs {
         "sd", "snd",
     )
     private val RTL_SCRIPTS = setOf("arab", "hebr", "thaa", "syrc", "nkoo")
+    private val LTR_SCRIPTS = setOf("latn", "cyrl")
 
     /** Whether [lang] ("ar", "he-IL", "ku-Arab", "per", …) is written right to left. A script in
      *  the code decides when there is one: "ku-Arab" is, "ug-Cyrl" is not. */
     fun isRtl(lang: String?): Boolean {
         val parts = (lang ?: "").trim().lowercase().split('-', '_')
-        val script = parts.drop(1).firstOrNull { p -> p.length == 4 && p.all { it in 'a'..'z' } }
-        if (script != null) return script in RTL_SCRIPTS
+        val rest = parts.drop(1)
+        if (rest.any { it in RTL_SCRIPTS }) return true
+        if (rest.any { it in LTR_SCRIPTS }) return false
         return parts[0] in RTL_LANGS
     }
 

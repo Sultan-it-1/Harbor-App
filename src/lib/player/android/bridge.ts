@@ -145,13 +145,16 @@ function nativeSub(url: string, lang?: string, rawTitle?: string): NativeSub {
 
 // The exact addon subtitle the viewer picked for an episode, kept per content key
 // (title | season | episode), so the same one comes back the next time that episode plays.
+// The native player can show a second subtitle together with the first; that one is kept the
+// same way under a key of its own.
 const SUB_MEMORY_KEY = "harbor.subtitle.memory.v1";
+const SUB2_MEMORY_KEY = "harbor.subtitle.memory2.v1";
 const SUB_MEMORY_MAX = 500;
 type RememberedSub = NativeSub & { at: number };
 
-function readSubMemory(): Record<string, RememberedSub> {
+function readSubMemory(storageKey: string): Record<string, RememberedSub> {
   try {
-    const raw = localStorage.getItem(SUB_MEMORY_KEY);
+    const raw = localStorage.getItem(storageKey);
     const parsed: unknown = raw ? JSON.parse(raw) : null;
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, RememberedSub>) : {};
   } catch {
@@ -160,9 +163,9 @@ function readSubMemory(): Record<string, RememberedSub> {
 }
 
 /** The subtitle remembered for this episode, in the shape the native player takes. */
-function rememberedSub(contentKey: string): NativeSub | null {
+function rememberedSub(contentKey: string, storageKey = SUB_MEMORY_KEY): NativeSub | null {
   if (!contentKey) return null;
-  const hit = readSubMemory()[contentKey];
+  const hit = readSubMemory(storageKey)[contentKey];
   if (!hit || typeof hit.url !== "string" || !hit.url) return null;
   return {
     url: hit.url,
@@ -172,10 +175,10 @@ function rememberedSub(contentKey: string): NativeSub | null {
 }
 
 /** Remembers the pick for this episode; null forgets it. Only the newest entries are kept. */
-function rememberSub(contentKey: string, sub: NativeSub | null) {
+function rememberSub(contentKey: string, sub: NativeSub | null, storageKey = SUB_MEMORY_KEY) {
   if (!contentKey) return;
   try {
-    const all = readSubMemory();
+    const all = readSubMemory(storageKey);
     if (!sub) {
       if (!(contentKey in all)) return;
       delete all[contentKey];
@@ -187,7 +190,7 @@ function rememberSub(contentKey: string, sub: NativeSub | null) {
       entries.length > SUB_MEMORY_MAX
         ? Object.fromEntries(entries.sort((a, b) => (b[1]?.at ?? 0) - (a[1]?.at ?? 0)).slice(0, SUB_MEMORY_MAX))
         : all;
-    localStorage.setItem(SUB_MEMORY_KEY, JSON.stringify(kept));
+    localStorage.setItem(storageKey, JSON.stringify(kept));
   } catch {
     /* storage full or unavailable: the pick just isn't remembered */
   }
@@ -240,6 +243,13 @@ export function createAndroidBridge(): PlayerBridge {
     }
     if (e.type === "subPicked") {
       if (e.url) rememberSub(lastContentKey, { url: e.url, lang: e.lang, label: e.label });
+      return;
+    }
+    if (e.type === "sub2Picked") {
+      // The second subtitle is the native player's own business (it says so when "No subtitles"
+      // or a change of the first takes it away); the page only keeps it for this episode.
+      const picked = !e.off && e.url ? { url: e.url, lang: e.lang, label: e.label } : null;
+      rememberSub(lastContentKey, picked, SUB2_MEMORY_KEY);
       return;
     }
     if (e.type === "state") {
@@ -313,6 +323,13 @@ export function createAndroidBridge(): PlayerBridge {
         sentSubUrls.add(restoreSub.url);
         initialSubs.push(restoreSub);
       }
+      // The second subtitle shown with it last time, by the same rules: the player puts it back
+      // once there is a first one to show it next to.
+      const restoreSub2 = !subsOff && src.isLive !== true ? rememberedSub(contentKey, SUB2_MEMORY_KEY) : null;
+      if (restoreSub2 && !sentSubUrls.has(restoreSub2.url) && !/^file:/i.test(restoreSub2.url)) {
+        sentSubUrls.add(restoreSub2.url);
+        initialSubs.push(restoreSub2);
+      }
       api?.play(
         JSON.stringify({
           url: src.url,
@@ -328,6 +345,7 @@ export function createAndroidBridge(): PlayerBridge {
           downloadId: src.contentKey != null ? (src.downloadId ?? "") : lastDownloadId,
           subsOff,
           ...(restoreSub ? { restoreSub } : {}),
+          ...(restoreSub2 ? { restoreSub2 } : {}),
         }),
       );
     },

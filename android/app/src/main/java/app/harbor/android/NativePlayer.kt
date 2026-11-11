@@ -2007,9 +2007,9 @@ class NativePlayer(
     }
 
     /**
-     * The second subtitle goes, by the viewer's doing: "None" in its tab, "No subtitles", or
-     * picking it as the first. Whatever was on its way or waiting to be put back goes too, and
-     * the page forgets it for this episode.
+     * The second subtitle goes: "None" in its tab, "No subtitles", or the same subtitle becoming
+     * the first. Whatever was on its way or waiting to be put back goes too, and the page
+     * forgets it for this episode.
      */
     private fun turnSecondOff() {
         userPickedSecond = true
@@ -2243,6 +2243,8 @@ class NativePlayer(
             toast(Strings.delayAddonOnly)
             return
         }
+        // The second subtitle went while its tab was still showing: nothing to delay.
+        if (second && secondId == null) return
         val delay = ms.coerceIn(-600_000, 600_000)
         // A subtitle with a sync state is timed by it alone, so its delay is edited there: the
         // plain delay on top would move it twice.
