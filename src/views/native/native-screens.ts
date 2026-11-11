@@ -529,7 +529,8 @@ export function cwCard(item: LibraryItem, t: T) {
   // Not out yet: when it airs, in place of "Up Next". The card opens as any other.
   if (item.waitingForAir) parts.push(formatAirsIn(t, item.nextAirDate));
   else if (item.upNext) parts.push(t("Up Next"));
-  else if (dur > 0 && item.external !== "simkl") parts.push(formatRemaining(t, dur - off));
+  // A tracker's card (Simkl, Trakt) has an estimated length: no "time left" made of it.
+  else if (dur > 0 && !item.external) parts.push(formatRemaining(t, dur - off));
   const wide = (u?: string) => (u ? u.replace(/\/t\/p\/original\//, "/t/p/w780/") : u);
   return {
     title: item.name,

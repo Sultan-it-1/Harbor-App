@@ -146,6 +146,37 @@ function otherIds(ids: Ids | undefined, type: string, own: string): string[] {
   return out.filter((id) => id !== own);
 }
 
+/** One viewing reaches the device's own save and the tracker seconds apart. */
+const SAME_VIEWING_MS = 2 * 60_000;
+
+/**
+ * Saves a tracker's paused position (Simkl's, Trakt's) as this device's resume point, where it
+ * is the newer one. Before, it was only written where the device had none, so an episode
+ * continued elsewhere still resumed from the old place here.
+ */
+export function backfillTrackerResume(item: LibraryItem): void {
+  const st = item.state;
+  if (!st || !(st.duration > 0)) return;
+  // A dismissed card keeps no saved position: writing one back would undo part of the dismissal.
+  if (isCwDismissed(item)) return;
+  const existing = readResumeEntry(item._id, st.season, st.episode);
+  const remoteT = Date.parse(st.lastWatched ?? "");
+  const remoteValid = Number.isFinite(remoteT) && remoteT > 0;
+  const ratio = st.timeOffset / st.duration;
+  // A tracker only knows a percentage. Where this device measured the real length, use it, and
+  // leave a position that already agrees alone: it is the exact one, the tracker's an estimate.
+  const measured = existing?.d && existing.d > 0 ? existing.d : 0;
+  if (existing && measured > 0 && Math.abs(existing.ms / measured - ratio) < 0.02) return;
+  const ms = measured > 0 ? Math.round(ratio * measured) : st.timeOffset;
+  // Newer by more than a moment: the pause this device itself just reported comes back dated a
+  // second later, and must not replace the exact position with its estimate.
+  const shouldWrite =
+    !existing || (remoteValid && remoteT > existing.t + SAME_VIEWING_MS) || (!existing.t && ms > existing.ms);
+  if (!shouldWrite) return;
+  // Dated when it was paused, not now: a sync is not a viewing and must not move the card up.
+  saveResumeBatch([{ id: item._id, ms, season: st.season, episode: st.episode, t: remoteValid ? remoteT : 0 }]);
+}
+
 export async function fetchSimklPlaybackItems(): Promise<LibraryItem[]> {
   if (!getSession()) return [];
   let raw: RawSession[];
@@ -169,27 +200,7 @@ export async function fetchSimklPlaybackItems(): Promise<LibraryItem[]> {
     const altIds = otherIds(node?.ids, item.type, item._id);
     if (altIds.length > 0) item.altIds = altIds;
     items.push(item);
-    // A dismissed card keeps no saved position: writing one back would undo part of the dismissal.
-    if (isCwDismissed(item)) continue;
-    // The newer of the two positions wins. Before, Simkl's was only written where the device had
-    // none, so an episode continued elsewhere still resumed from the old place here.
-    const existing = readResumeEntry(item._id, item.state.season, item.state.episode);
-    const remoteT = Date.parse(item.state.lastWatched ?? "");
-    const remoteValid = Number.isFinite(remoteT) && remoteT > 0;
-    const ratio = item.state.timeOffset / item.state.duration;
-    // Simkl only knows a percentage. Where this device measured the real length, use it, and
-    // leave a position that already agrees alone: it is the exact one, Simkl's is an estimate.
-    const measured = existing?.d && existing.d > 0 ? existing.d : 0;
-    if (measured > 0 && Math.abs(existing!.ms / measured - ratio) < 0.02) continue;
-    const ms = measured > 0 ? Math.round(ratio * measured) : item.state.timeOffset;
-    const shouldWrite =
-      !existing || (remoteValid && remoteT >= existing.t) || (!existing.t && ms > existing.ms);
-    if (shouldWrite) {
-      // Dated when it was paused, not now: a sync is not a viewing and must not move the card up.
-      saveResumeBatch([
-        { id: item._id, ms, season: item.state.season, episode: item.state.episode, t: remoteValid ? remoteT : 0 },
-      ]);
-    }
+    backfillTrackerResume(item);
   }
   return items;
 }

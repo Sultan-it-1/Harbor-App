@@ -130,7 +130,8 @@ const library: Record<string, string> = {
   "Watchlist is what you've saved for later. History is everything you've watched.": "قائمة المشاهدة هي ما حفظته لوقت لاحق. السجل هو كل ما شاهدته.",
   "Long-press any title in Harbor or tap \"Add to Watchlist\" on its detail page to save it here.": "اضغط مطوّلاً على أي عنوان في Harbor أو اضغط \"أضف إلى قائمة المشاهدة\" في صفحة تفاصيله لحفظه هنا.",
 
-  // Continue Watching: the next episode is not out yet.
+  // Continue Watching: a card from Trakt, and a next episode that is not out yet.
+  "Paused on Trakt": "متوقّف مؤقتًا على Trakt",
   "Airing soon": "يُعرض قريبًا",
   "Airs in {days}d": "يُعرض بعد {days} يوم",
   "Airs in {days}d {hours}h": "يُعرض بعد {days} يوم و{hours} ساعة",

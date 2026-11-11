@@ -305,9 +305,11 @@ export function createAndroidBridge(): PlayerBridge {
       const subsOff = startSubsOff(contentKey);
       // The subtitle picked for this episode last time: the native player puts it back in place
       // of its automatic choice. It has to be in the list it is given (it may sit past the first
-      // few, or come from a search that has not run yet). Not when subtitles start off.
+      // few, or come from a search that has not run yet). Not when subtitles start off. A
+      // subtitle saved on the phone is not added here: the player lists the files that are
+      // really there, and one whose download was deleted must not come back as a dead row.
       const restoreSub = !subsOff && src.isLive !== true ? rememberedSub(contentKey) : null;
-      if (restoreSub && !sentSubUrls.has(restoreSub.url)) {
+      if (restoreSub && !sentSubUrls.has(restoreSub.url) && !/^file:/i.test(restoreSub.url)) {
         sentSubUrls.add(restoreSub.url);
         initialSubs.push(restoreSub);
       }

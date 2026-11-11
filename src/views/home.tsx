@@ -44,6 +44,7 @@ import {
 import { useTrakt } from "@/lib/trakt/provider";
 import { buildTraktHomeRows } from "@/lib/trakt/home-rails";
 import { fetchWatchedKeySet } from "@/lib/trakt/history";
+import { fetchTraktPlaybackItems } from "@/lib/trakt/playback";
 import { recentlyPlayed, subscribePlayback, type WatchedSet } from "@/lib/playback-history";
 import { detectAnimeForCw, useDetectedAnimeVersion } from "@/lib/anime-detect";
 import { buildSimklHomeRows } from "@/lib/simkl/home-rails";
@@ -88,6 +89,7 @@ export function Home({ active = true }: { active?: boolean }) {
   const [traktRows, setTraktRows] = useState<HomeRow[]>([]);
   const [simklRows, setSimklRows] = useState<HomeRow[]>([]);
   const [simklCw, setSimklCw] = useState<LibraryItem[]>([]);
+  const [traktCw, setTraktCw] = useState<LibraryItem[]>([]);
   const [traktWatched, setTraktWatched] = useState<Set<string>>(() => new Set());
   const [localWatched, setLocalWatched] = useState<WatchedSet>(() => recentlyPlayed());
   useEffect(() => subscribePlayback(() => setLocalWatched(recentlyPlayed())), []);
@@ -267,6 +269,24 @@ export function Home({ active = true }: { active?: boolean }) {
     };
   }, [simklConnected]);
 
+  // What is paused on Trakt joins Continue Watching, as Simkl's does. Connected is the only
+  // switch there is for Trakt on Home (its rows have no other).
+  useEffect(() => {
+    if (!traktConnected) {
+      setTraktCw([]);
+      return;
+    }
+    let cancelled = false;
+    fetchTraktPlaybackItems()
+      .then((cw) => {
+        if (!cancelled) setTraktCw(cw);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [traktConnected]);
+
   const trackedRef = useRef<Set<string>>(new Set());
   // The last library that arrived, and whose it was. It outlives the effect below, which runs
   // again every time Home is shown or left: that alone is no reason to fetch it all again.
@@ -392,7 +412,7 @@ export function Home({ active = true }: { active?: boolean }) {
     const cloudItems = items.map((i) =>
       i.upNext || i.waitingForAir ? { ...i, upNext: undefined, waitingForAir: undefined, nextAirDate: undefined } : i,
     );
-    const eligible = [...cloudItems, ...simklCw, ...localCwItems]
+    const eligible = [...cloudItems, ...simklCw, ...traktCw, ...localCwItems]
       .filter(
         (i) =>
           (i.type as string) !== "other" &&
@@ -406,7 +426,7 @@ export function Home({ active = true }: { active?: boolean }) {
       .map((e) => e.i);
     // One card per title, whichever sources it came from (and whatever id each knows it by).
     return dedupeCwItems(eligible, 100);
-  }, [items, simklCw, localCwVer, cwVersion, settings.animeOnlyInAnimeRoom, settings.cwAdvanceNext, animeDetectVer, manualWatchedVer]);
+  }, [items, simklCw, traktCw, localCwVer, cwVersion, settings.animeOnlyInAnimeRoom, settings.cwAdvanceNext, animeDetectVer, manualWatchedVer]);
   const continueWatching = cwDeduped.items;
   // The copies each card stands for, read when a card is removed.
   const cwAbsorbedRef = useRef(cwDeduped.absorbed);

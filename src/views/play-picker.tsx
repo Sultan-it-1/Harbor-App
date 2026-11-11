@@ -10,7 +10,13 @@ import { useTogether } from "@/lib/together/provider";
 import { buildMatchScores, matchBadge, MATCH_CLOSE } from "@/lib/together/source-match";
 import { HostSourceBanner } from "@/components/host-source-banner";
 import { consumeRecentStubEvent } from "@/lib/dead-streams";
-import { readPlayback, readLastSeriesPlayback, streamMatchesEntry, streamMatchesSource } from "@/lib/playback-history";
+import {
+  findPreferredSourceMatch,
+  readPlayback,
+  readLastSeriesPlayback,
+  streamMatchesEntry,
+  streamMatchesPreferredSource,
+} from "@/lib/playback-history";
 import { useSettings } from "@/lib/settings";
 import type { ScoredStream, Tier } from "@/lib/streams/types";
 import { isAddonRanked } from "@/lib/streams/addon-detect";
@@ -295,6 +301,10 @@ export function PlayPicker({
     isTorrentioStream,
     preferredLangs,
     hostSource: hostSourceForMedia,
+    // The same numbering the source filter checks against. Not for anime: its releases
+    // count episodes across seasons, so their numbers say nothing reliable here.
+    season: isAnimeRequest ? null : (episode?.imdbSeason ?? episode?.season ?? null),
+    episode: isAnimeRequest ? null : (episode?.imdbEpisode ?? episode?.episode ?? null),
   });
 
   const autoFiredRef = useRef(false);
@@ -322,7 +332,10 @@ export function PlayPicker({
 
   const sameSourceMatch: ScoredStream | null = useMemo(() => {
     if (!filteredPicker || !lastSeriesSource || previousMatch) return null;
-    return filteredPicker.all.find((s) => streamMatchesSource(s, lastSeriesSource)) ?? null;
+    // Only a confirmed same release (same torrent, binge group or release group, at the same
+    // resolution and dub) is shown as "the same source"; a look-alike from the same addon
+    // is not.
+    return findPreferredSourceMatch(filteredPicker.all, lastSeriesSource, streamMatchesPreferredSource);
   }, [filteredPicker, lastSeriesSource, previousMatch]);
 
   const currentPick: ScoredStream | null = useMemo(() => {

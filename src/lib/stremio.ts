@@ -35,7 +35,8 @@ export type LibraryItem = {
   temp: boolean;
   _ctime: string;
   _mtime: string;
-  external?: "simkl";
+  /** A card from a tracker's paused sessions, not the Stremio library: its length is an estimate. */
+  external?: "simkl" | "trakt";
   /** The same title's other ids (IMDb, TMDB), used to merge and dismiss Continue Watching copies. */
   altIds?: string[];
   /** Release year, where the source gives one (the trackers do): two titles of one name differ by it. */
