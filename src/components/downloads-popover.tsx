@@ -9,6 +9,7 @@ import {
   type DownloadItem,
 } from "@/lib/download/downloads-store";
 import { useT } from "@/lib/i18n";
+import { isWeb } from "@/lib/platform";
 import { useView } from "@/lib/view";
 
 type T = (key: string) => string;
@@ -141,7 +142,8 @@ function DownloadRow({ d, t, onOpen }: { d: DownloadItem; t: T; onOpen: () => vo
           </RowBtn>
         ) : (
           <>
-            {d.status === "done" && (
+            {/* Opening the file's folder is the desktop app's; the Android app and the web build have none. */}
+            {d.status === "done" && !isWeb() && (
               <RowBtn label={t("Show in folder")} onClick={() => void revealDownload(d.id)}>
                 <FolderOpen size={14} strokeWidth={2} />
               </RowBtn>

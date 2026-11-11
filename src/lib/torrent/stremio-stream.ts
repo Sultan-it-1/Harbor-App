@@ -109,7 +109,22 @@ function fileName(f: RawFile): string {
   return "Unknown file";
 }
 
+/** Settings > Streaming sources > "Turn torrents off completely". Read straight from the
+ *  saved settings because this is asked from places that have no settings hook. */
+export function torrentsDisabled(): boolean {
+  try {
+    const raw = localStorage.getItem("harbor.settings");
+    if (!raw) return false;
+    return (JSON.parse(raw) as { torrentsDisabled?: boolean }).torrentsDisabled === true;
+  } catch {
+    return false;
+  }
+}
+
+// With torrents turned off, every question below answers "no": nothing may start a
+// peer-to-peer stream, on this device or through a remote streaming server.
 export function localTorrentAllowed(): boolean {
+  if (torrentsDisabled()) return false;
   try {
     const raw = localStorage.getItem("harbor.settings");
     if (!raw) return true;
@@ -120,19 +135,27 @@ export function localTorrentAllowed(): boolean {
 }
 
 export function directTorrentEnabled(): boolean {
+  if (torrentsDisabled()) return false;
   if (remoteStreamServerUrl()) return true;
   return localTorrentAllowed();
 }
 
+/** The torrent engine is part of the desktop app. The Android app and the web build have none. */
+export function torrentEngineAvailable(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
 export function directStreamAvailable(stream: { infoHash?: string | null }): boolean {
+  if (torrentsDisabled()) return false;
   if (!stream.infoHash) return false;
-  if (!("__TAURI_INTERNALS__" in window)) return false;
+  if (!torrentEngineAvailable()) return false;
   return directTorrentEnabled();
 }
 
 const P2P_MIN_SEEDERS = 2;
 
 export function engineP2pEligible(stream: { infoHash?: string | null; seeders?: number | null }): boolean {
+  if (torrentsDisabled()) return false;
   if (!directStreamAvailable(stream)) return false;
   if (stream.seeders != null && stream.seeders < P2P_MIN_SEEDERS) return false;
   return true;

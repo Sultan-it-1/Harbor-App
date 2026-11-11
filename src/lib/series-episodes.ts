@@ -5,9 +5,16 @@ import type { Meta } from "./cinemeta";
 import type { PlayEpisode } from "./view";
 import { tmdbDetails, tmdbSeasonEpisodes } from "./providers/tmdb";
 import { resolveMeta } from "./meta-resource";
+import { readActiveStremioAuthKey } from "./auth";
 import { animeKitsuMeta } from "./providers/anime-kitsu-addon";
 import { externalToKitsu } from "./providers/anime-mapping";
 import { parseKitsuId } from "./providers/kitsu";
+
+/** An episode's air date as the day alone ("2024-05-12"), the form every reader of airDate
+ *  expects (TMDB's). Cinemeta and addons give a full timestamp, or nothing. */
+function airDay(value: string | null | undefined): string | undefined {
+  return (value && /^\d{4}-\d{2}-\d{2}/.exec(value)?.[0]) || undefined;
+}
 
 export function isAnimeId(id: string): boolean {
   return (
@@ -52,6 +59,7 @@ async function getAnimeEpisodes(id: string): Promise<PlayEpisode[] | null> {
       name: v.title || undefined,
       still: v.thumbnail ?? undefined,
       overview: v.overview ?? undefined,
+      airDate: airDay(v.released),
     };
     if (v.id) ep.kitsuStreamId = v.id;
     if (v.imdb_id ?? addonMeta?.imdb_id) ep.imdbId = v.imdb_id ?? addonMeta?.imdb_id;
@@ -87,18 +95,10 @@ registerCache("episodes:tmdbSeason", () => tmdbSeasonCache.size);
 registerCache("episodes:addon", () => addonEpsCache.size);
 registerCache("episodes:cinemetaList", () => cinemetaListCache.size);
 
-function readAuthKey(): string | null {
-  try {
-    const raw = localStorage.getItem("harbor.auth");
-    return raw ? ((JSON.parse(raw) as { authKey?: string }).authKey ?? null) : null;
-  } catch {
-    return null;
-  }
-}
 
 async function getAddonEpisodes(id: string): Promise<PlayEpisode[] | null> {
   if (addonEpsCache.has(id)) return addonEpsCache.get(id)!;
-  const m = await resolveMeta(readAuthKey(), "series", id).catch(() => null);
+  const m = await resolveMeta(readActiveStremioAuthKey(), "series", id).catch(() => null);
   const raw = m?.videos ?? [];
   const eps: PlayEpisode[] = [];
   for (const v of raw) {
@@ -106,7 +106,13 @@ async function getAddonEpisodes(id: string): Promise<PlayEpisode[] | null> {
     const episode =
       typeof v.episode === "number" ? v.episode : typeof v.number === "number" ? v.number : null;
     if (season == null || episode == null || season < 1) continue;
-    const ep: PlayEpisode = { season, episode, name: v.title || v.name || undefined, still: v.thumbnail };
+    const ep: PlayEpisode = {
+      season,
+      episode,
+      name: v.title || v.name || undefined,
+      still: v.thumbnail,
+      airDate: airDay(v.released || v.firstAired),
+    };
     const vid = (v as { id?: string }).id;
     if (vid && (vid.startsWith("kitsu:") || vid.startsWith("mal:"))) ep.kitsuStreamId = vid;
     else if (vid) ep.videoId = vid;
@@ -199,6 +205,8 @@ async function loadCinemetaEpisodes(id: string): Promise<PlayEpisode[] | null> {
     thumbnail?: string;
     overview?: string;
     description?: string;
+    released?: string;
+    firstAired?: string;
   }>;
   const eps: PlayEpisode[] = [];
   for (const v of raw) {
@@ -217,6 +225,8 @@ async function loadCinemetaEpisodes(id: string): Promise<PlayEpisode[] | null> {
       name: v.title || v.name || undefined,
       still: v.thumbnail,
       overview: v.overview || v.description,
+      // Without it Continue Watching could not tell an episode that is out from one announced.
+      airDate: airDay(v.released || v.firstAired),
     });
   }
   eps.sort((a, b) => a.season - b.season || a.episode - b.episode);

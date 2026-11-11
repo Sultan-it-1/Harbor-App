@@ -285,7 +285,6 @@ function useIdleEvict(active: boolean, pin = false): boolean {
 }
 
 export function App() {
-  // if (isWeb() && isMobileDevice()) return <MobileNotice />;
   // The outer boundary also covers the providers: a throw in one of them used to leave a
   // blank screen (the inner boundary sits below them).
   return (
@@ -595,6 +594,8 @@ function Shell() {
   }, [setView, goBack, openGrid]);
 
   useEffect(() => {
+    // Multiview windows are the desktop app's: nothing to stop (or load) anywhere else.
+    if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
     if (topKind !== "live") {
       void import("@/lib/multiview/bridge").then(({ mvStopAll }) =>
         mvStopAll().catch(() => {}),
@@ -959,7 +960,8 @@ function Shell() {
           className="pointer-events-none absolute inset-x-0 top-0 z-30 h-24 bg-gradient-to-b from-canvas/85 via-canvas/40 to-transparent"
         />
         {!immersive && (themeHasTopbar || (settingsTop && layout !== "minui" && layout !== "custom")) && <Topbar />}
-        {!immersive && layout === "rail" && !settingsTop && (
+        {/* The side rail's fade; the phone has no rail whatever the theme's layout says. */}
+        {!phone && !immersive && layout === "rail" && !settingsTop && (
           <div
             aria-hidden
             className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20 bg-gradient-to-b from-canvas/90 via-canvas/40 to-transparent"

@@ -10,6 +10,10 @@ import type { EpgIndex, EpgProgram, IptvChannel, IptvPlaylist } from "@/lib/iptv
 import type { Meta } from "@/lib/cinemeta";
 import { useSettings } from "@/lib/settings";
 import { useView } from "@/lib/view";
+import { isWeb } from "@/lib/platform";
+import { downloadText } from "@/lib/download-text";
+import { alertDialog } from "@/lib/dialog";
+import { t } from "@/lib/i18n";
 
 export function synthChannelMeta(ch: IptvChannel): Meta {
   return {
@@ -79,6 +83,14 @@ export function useLiveActions(params: {
       const source = settings.iptvPlaylists.find((s) => s.id === id);
       const filename = suggestExportFilename(source?.name ?? "playlist");
       try {
+        // The Android app (and the web page) have no Tauri dialog / file plugins: the export
+        // threw there and nothing happened. They save through downloadText instead (on
+        // Android the system "save as" screen), which says whether a file was written.
+        if (isWeb()) {
+          const saved = await downloadText(filename, buildM3u(playlist.channels, playlist.epgUrl), ["m3u", "m3u8"], "M3U Playlist");
+          if (!saved) void alertDialog(t("The playlist was not saved."));
+          return;
+        }
         const target = await saveDialog({
           defaultPath: filename,
           filters: [{ name: "M3U Playlist", extensions: ["m3u", "m3u8"] }],
@@ -87,6 +99,7 @@ export function useLiveActions(params: {
         await writeTextFile(target, buildM3u(playlist.channels, playlist.epgUrl));
       } catch (e) {
         console.warn("[live] export playlist failed", e);
+        void alertDialog(t("Couldn't export the playlist."));
       }
     },
     [activeId, playlist, settings.iptvPlaylists],

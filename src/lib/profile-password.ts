@@ -37,10 +37,45 @@ export async function hashProfilePassword(password: string): Promise<string> {
   return `pbkdf2$${ITERATIONS}$${hex(salt)}$${await pbkdf2(password, salt, ITERATIONS)}`;
 }
 
-let failures = 0;
+// Wrong tries and the wait they earned are kept in storage: counted in memory only, closing
+// and reopening the app gave three more free tries every time.
+const GUARD_KEY = "harbor.profile-pin.guard";
+const MAX_DELAY_MS = 30_000;
+
+type Guard = { failures: number; lockUntil: number };
+
+function readGuard(): Guard {
+  try {
+    const v = JSON.parse(localStorage.getItem(GUARD_KEY) ?? "null") as Partial<Guard> | null;
+    const failures = Number(v?.failures);
+    const lockUntil = Number(v?.lockUntil);
+    return {
+      failures: Number.isFinite(failures) && failures > 0 ? Math.floor(failures) : 0,
+      lockUntil: Number.isFinite(lockUntil) ? lockUntil : 0,
+    };
+  } catch {
+    return { failures: 0, lockUntil: 0 };
+  }
+}
+
+function writeGuard(guard: Guard | null): void {
+  try {
+    if (guard) localStorage.setItem(GUARD_KEY, JSON.stringify(guard));
+    else localStorage.removeItem(GUARD_KEY);
+  } catch {
+    /* storage full or blocked: the backoff then only lasts until the app is closed */
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function verifyProfilePassword(password: string, hash: string): Promise<boolean> {
   if (!hash) return false;
+  const guard = readGuard();
+  // A wait that was cut short (the app closed and opened again) is finished first. Capped, so a
+  // clock that was moved back can't lock the profile for long.
+  const pending = guard.lockUntil - Date.now();
+  if (pending > 0) await sleep(Math.min(pending, MAX_DELAY_MS));
   let ok: boolean;
   if (hash.startsWith("pbkdf2$")) {
     const [, iter, salt, want] = hash.split("$");
@@ -49,12 +84,13 @@ export async function verifyProfilePassword(password: string, hash: string): Pro
     ok = (await legacyHash(password)) === hash;
   }
   if (ok) {
-    failures = 0;
+    writeGuard(null);
     return true;
   }
-  failures++;
+  const failures = guard.failures + 1;
   // 1st-3rd wrong try: at once; then 1 s, 2 s, 4 s … up to 30 s before answering.
-  const delay = failures <= 3 ? 0 : Math.min(30_000, 1000 * 2 ** (failures - 4));
-  if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+  const delay = failures <= 3 ? 0 : Math.min(MAX_DELAY_MS, 1000 * 2 ** (failures - 4));
+  writeGuard({ failures, lockUntil: Date.now() + delay });
+  if (delay > 0) await sleep(delay);
   return false;
 }

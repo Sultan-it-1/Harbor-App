@@ -193,6 +193,25 @@ export function clearAllSnapshots(): number {
   }
 }
 
+/**
+ * For a full storage quota (storage-recovery): drops the [count] oldest thumbnails and returns
+ * how many went (0 = none left).
+ */
+export function dropOldestSnapshots(count: number): number {
+  try {
+    const index = readIndex().sort((a, b) => a.t - b.t);
+    const gone = index.slice(0, count);
+    if (gone.length === 0) return 0;
+    for (const e of gone) dropEntry(e.id);
+    writeIndex(index.slice(gone.length));
+    bumpSnapVersion();
+    return gone.length;
+  } catch {
+    // A broken index: nothing to go by.
+    return 0;
+  }
+}
+
 export function snapshotCount(): number {
   return readIndex().length;
 }

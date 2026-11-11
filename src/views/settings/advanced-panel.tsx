@@ -65,12 +65,25 @@ export function AdvancedPanel() {
         <BackupRow />
       </Section>
 
-      <Section
-        title={t("Downloads")}
-        subtitle={t("Where Harbor saves videos when you hit Download in the player. Pick any folder, including one on a different drive.")}
-      >
-        <DownloadsSection />
-      </Section>
+      {isPhoneLayout() ? (
+        // Android: downloads always go to the app's own folder, so there is no folder to choose
+        // (the desktop section below asks the computer for folders and never answers here).
+        <Section
+          title={t("Downloads")}
+          subtitle={t("Videos you download are kept in the app's own folder on this phone. They are removed if you uninstall the app.")}
+        >
+          <span dir="ltr" className="break-all rounded-xl border border-edge-soft bg-canvas/40 px-4 py-3 text-start font-mono text-[12.5px] text-ink-muted">
+            Android/data/app.harbor.android/files/Movies/Harbor
+          </span>
+        </Section>
+      ) : (
+        <Section
+          title={t("Downloads")}
+          subtitle={t("Where Harbor saves videos when you hit Download in the player. Pick any folder, including one on a different drive.")}
+        >
+          <DownloadsSection />
+        </Section>
+      )}
 
       <Section
         title={t("Privacy")}

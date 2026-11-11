@@ -1,3 +1,4 @@
+import { isAndroidApp } from "@/lib/android";
 import { isTrustedGroup } from "../parser";
 import type { ParsedStream, ScoredStream, ScoreReason } from "../types";
 import { trustedAddonPoints } from "./scoring-addons";
@@ -23,6 +24,9 @@ export function scoreStream(
   let score = 0;
 
   const cached = isCachedOnActive(s, opts.activeDebrids);
+  // "One audio track only" is a limit of the HTML5 player. The Android player switches audio
+  // tracks, so a multi-language file is not a worse pick there.
+  const singleAudioOnly = opts.preferSingleAudioTrack === true && !isAndroidApp();
   const directPlayable = !!s.url;
   const isEasynews = /easynews/i.test(s.addonName ?? "") || /easynews/i.test(s.parsedTitle ?? "");
   if (cached || isEasynews) {
@@ -160,7 +164,7 @@ export function scoreStream(
         score += 12;
         reasons.push({ signal: "preferred-language", delta: 12 });
       } else if (isMulti) {
-        if (opts.preferSingleAudioTrack) {
+        if (singleAudioOnly) {
           score -= 18;
           reasons.push({ signal: "html5-multi-audio-penalty", delta: -18 });
         } else {
@@ -172,7 +176,7 @@ export function scoreStream(
         reasons.push({ signal: "language-mismatch", delta: -14 });
       }
     }
-  } else if (opts.preferSingleAudioTrack && s.audioLanguages.includes("Multi")) {
+  } else if (singleAudioOnly && s.audioLanguages.includes("Multi")) {
     score -= 12;
     reasons.push({ signal: "html5-multi-audio-penalty", delta: -12 });
   }

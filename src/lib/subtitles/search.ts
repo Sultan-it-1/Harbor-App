@@ -5,6 +5,7 @@ import { searchWyzie } from "./providers/wyzie";
 import { searchAddons } from "./providers/addons";
 import { searchOpenSubtitlesV3 } from "./providers/opensubtitles-v3";
 import { langScore, normalizeLang } from "./language";
+import type { StreamHints } from "./stream-hints";
 
 export type SearchOptions = {
   providers?: { wyzie?: boolean; addons?: boolean; opensubtitles?: boolean };
@@ -13,12 +14,8 @@ export type SearchOptions = {
   streamHints?: StreamHints;
 };
 
-export type StreamHints = {
-  release?: string | null;
-  source?: string | null;
-  resolution?: string | null;
-  preferHearingImpaired?: boolean;
-};
+// One definition of the hints (it also carries the season and episode being played).
+export type { StreamHints } from "./stream-hints";
 
 export async function searchSubtitles(
   q: SubSearchQuery,

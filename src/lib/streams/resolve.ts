@@ -7,6 +7,7 @@ import {
   engineP2pEligible,
   isVideoFile,
   localTorrentAllowed,
+  torrentEngineAvailable,
   trackersFromSources,
   type TorrentFile,
 } from "@/lib/torrent/stremio-stream";
@@ -97,6 +98,8 @@ export async function resolveStream(
     return { ok: false, code: "no-source", tried };
   }
   if (debrids.length === 0) {
+    // No torrent engine outside the desktop app: an info hash alone needs a debrid service.
+    if (!torrentEngineAvailable()) return { ok: false, code: "no-debrid-configured", tried };
     const direct = await tryTorrentEngine(stream);
     if (direct) return { ok: true, data: direct, via: "p2p" };
     return { ok: false, code: engineFailureCode(), tried };
@@ -135,7 +138,8 @@ export async function resolveStream(
   }
   const direct = await tryTorrentEngine(stream);
   if (direct) return { ok: true, data: direct, via: "p2p" };
-  if (directTorrentEnabled()) return { ok: false, code: engineFailureCode(), tried };
+  // Where there is no engine (Android), the debrid's own error is the one worth showing.
+  if (torrentEngineAvailable() && directTorrentEnabled()) return { ok: false, code: engineFailureCode(), tried };
   return { ok: false, code: tried[tried.length - 1]?.code ?? "all-debrids-failed", tried };
 }
 

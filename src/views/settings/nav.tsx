@@ -535,7 +535,21 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
 const PHONE_HIDDEN_SECTIONS = new Set<string>(["mpv", "playerLayout", "hotkeys", "anime"]);
 // Rows the phone hides inside sections it shows (mpv engine, audio filters, local torrent
 // engine…): search must not offer them either.
-const PHONE_HIDDEN_ANCHORS = new Set<string>(["Player engine", "Aspect ratio", "Audio", "Internet speed", "Local engine", "Anime4K presets"]);
+const PHONE_HIDDEN_ANCHORS = new Set<string>([
+  "Player engine",
+  "Aspect ratio",
+  "Audio",
+  "Internet speed",
+  "Local engine",
+  "Anime4K presets",
+  // Sections only the desktop app draws (its updater, tray, window and built-in server).
+  "Updates",
+  "System tray",
+  "Stremio install links",
+  "Discord Rich Presence",
+  "Window title bar",
+  "Your streaming server address",
+]);
 const VISIBLE_NAV_GROUPS = isPhoneLayout()
   ? NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((it) => !PHONE_HIDDEN_SECTIONS.has(it.id)) })).filter((g) => g.items.length > 0)
   : NAV_GROUPS;
@@ -602,8 +616,6 @@ export function SettingsNav({
     settings.dlKey,
   ].filter(Boolean).length;
 
-  const debridChip = libraryKeys > 0 ? `${libraryKeys}/5` : null;
-
   const relayLive = settings.togetherRelayUrl ? "live" : null;
   const langChip =
     settings.preferredLanguages.length === 0
@@ -624,7 +636,8 @@ export function SettingsNav({
     trakt: null,
     simkl: null,
     relay: relayLive,
-    streaming: debridChip,
+    // Its count of debrid keys is the accent chip drawn next to it ("2D").
+    streaming: null,
     p2p: null,
     language: langChip,
     player: settings.playerEngine === "auto" ? null : settings.playerEngine,

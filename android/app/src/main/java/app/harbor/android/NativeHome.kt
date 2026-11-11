@@ -35,7 +35,8 @@ import kotlin.math.min
  * The page still decides WHAT is on Home (addons, TMDB, Trakt, row order, hidden rows…) and
  * handles every tap, so nothing of that is written twice. Contract (src/views/home/native-home.ts):
  *   page   -> HarborAndroid.homeSet(modelJson)   what to show (HomeModel)
- *   page   -> HarborAndroid.homeShow(on, …)       shown only while Home is on screen with nothing over it
+ *   page   -> HarborAndroid.screenShow(page, …)  which screen is up ("" = none): one shows only
+ *                                                while its page is on screen with nothing over it
  *   native -> window.__harborNativeHome(json)    {p:page, a:"hero",i,what:"open"|"play"|"list"}
  *                                                {a:"open"|"hold"|"play",row,i} {a:"all",row} {a:"more",row}
  *                                                {a:"chip",row,what} {a:"customize"} {a:"together"} {a:"failed"}

@@ -1,17 +1,69 @@
 import type { Meta } from "@/lib/cinemeta";
 import { MOVIE_GENRES, TV_GENRES } from "@/lib/feed/tags";
+import { t } from "@/lib/i18n";
 import { tmdbDiscover } from "@/lib/providers/tmdb";
 
 export type ArabicRowDef = {
   id: string;
   titleKey: string;
+  /** Values for the placeholders in the title ("Ramadan {year} Series"). */
+  titleVars?: () => Record<string, string | number>;
   english: string;
   type: "movie" | "series";
   fetch: (key: string, page: number) => Promise<Meta[]>;
 };
 
+/** A row's title in the UI language, with its placeholders filled in. */
+export function arabicRowTitle(def: ArabicRowDef): string {
+  return t(def.titleKey, def.titleVars?.());
+}
+
 const ARABIC = "ar-SA";
-const RAMADAN_YEARS = [2026, 2025];
+
+// Where the Hijri calendar isn't available: 1 Ramadan 1447 (18 Feb 2026) and the mean lunar
+// year, which is right to within a day or two.
+const RAMADAN_1447_MS = Date.UTC(2026, 1, 18);
+const LUNAR_YEAR_MS = 354.367 * 86_400_000;
+
+let ramadanMemo: { day: string; year: number } | null = null;
+
+/**
+ * The Gregorian year the latest Ramadan began in: the season the "Ramadan series" row is about.
+ * It changes on 1 Ramadan, not on 1 January.
+ */
+export function ramadanYear(): number {
+  const now = new Date();
+  const today = now.toDateString();
+  if (ramadanMemo?.day === today) return ramadanMemo.year;
+  let year: number | null = null;
+  try {
+    const fmt = new Intl.DateTimeFormat("en-u-ca-islamic-umalqura-nu-latn", { month: "numeric", day: "numeric" });
+    if (fmt.resolvedOptions().calendar === "islamic-umalqura") {
+      // Walk back a month at a time to Ramadan (month 9), then to its first day.
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
+      for (let hop = 0; hop < 14 && year == null; hop++) {
+        const parts = fmt.formatToParts(d);
+        const month = Number(parts.find((p) => p.type === "month")?.value);
+        const day = Number(parts.find((p) => p.type === "day")?.value);
+        if (!Number.isFinite(month) || !Number.isFinite(day)) break;
+        if (month === 9) {
+          d.setDate(d.getDate() - (day - 1));
+          year = d.getFullYear();
+        } else {
+          d.setDate(d.getDate() - day);
+        }
+      }
+    }
+  } catch {
+    /* no Hijri calendar here: the estimate below */
+  }
+  if (year == null) {
+    const seasons = Math.floor((now.getTime() - RAMADAN_1447_MS) / LUNAR_YEAR_MS);
+    year = new Date(RAMADAN_1447_MS + seasons * LUNAR_YEAR_MS).getUTCFullYear();
+  }
+  ramadanMemo = { day: today, year };
+  return year;
+}
 const GULF_COUNTRIES = "SA|AE|KW|QA|BH|OM";
 
 function arParams(extra: Record<string, string>): Record<string, string> {
@@ -30,8 +82,11 @@ function trendingSince(): string {
 }
 
 async function fetchRamadan(key: string, page: number): Promise<Meta[]> {
-  const year = RAMADAN_YEARS[(page - 1) % RAMADAN_YEARS.length];
-  const cycle = Math.floor((page - 1) / RAMADAN_YEARS.length) + 1;
+  // This season first, then the one before, page by page.
+  const latest = ramadanYear();
+  const years = [latest, latest - 1];
+  const year = years[(page - 1) % years.length];
+  const cycle = Math.floor((page - 1) / years.length) + 1;
   return tmdbDiscover(
     key,
     "tv",
@@ -82,7 +137,10 @@ async function fetchTrending(key: string, page: number): Promise<Meta[]> {
 export const ARABIC_RAMADAN: ArabicRowDef = {
   id: "ramadan",
   titleKey: "arabic.row.ramadan",
-  english: "Ramadan 2026 Series",
+  titleVars: () => ({ year: ramadanYear() }),
+  get english() {
+    return `Ramadan ${ramadanYear()} Series`;
+  },
   type: "series",
   fetch: fetchRamadan,
 };

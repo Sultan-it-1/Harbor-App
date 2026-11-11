@@ -683,18 +683,18 @@ export function DetailView({
       : t("Play");
 
 
-  // Android, a film: drawn natively (see @/views/native/native-screens) like the page: the hero
+  // Android: drawn natively (see @/views/native/native-screens) like the page: the hero
   // (backdrop, tagline, logo, year / ratings / runtime / genres, Play and "…", which opens the
   // page's own menu: watchlist, favourite, trailer, download, Trakt…), the synopsis, then the
   // sections in the page's order (crew, cast, collection, more like this, you might also like,
-  // media, information). Series, anime and live channels keep the page for now (their episode
-  // lists, downloads and seasons).
+  // media, information).
   const { topKind, openPerson, openCollection } = useView();
   const nativeOn = useNativeScreensEnabled();
-  // Series too (their episode list hands its row over, native-sink): TMDB's seasons, or the
-  // addon's / Cinemeta's videos when TMDB has none. Live channels keep the page for now.
-  // A live channel's page (opened from Live TV) too: its picture, name and line, Play and "Open
-  // in TV Shows / Movies" as on the page.
+  // Films, series and anime. A series' episode list hands its row over (native-sink): TMDB's
+  // seasons, or the addon's / Cinemeta's videos when TMDB has none; an anime's own list does
+  // the same. An addon's own title and a live channel's page (opened from Live TV) too: its
+  // picture, name and line, Play and "Open in TV Shows / Movies" as on the page. Only other
+  // types, and the page while its layout is being edited, stay the page's.
   const nativeBlocked =
     (meta.type !== "movie" && meta.type !== "series" && meta.type !== "anime" && !addonNative) ||
     layoutEdit;

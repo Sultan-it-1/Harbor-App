@@ -418,7 +418,11 @@ export function TraktComments({ resolution }: { resolution: IdResolution | null 
       setComments(merged);
       setHasMore(data.length >= COMMENTS_PAGE_SIZE);
       setLoading(false);
-    });
+    })
+      // A failed request ends the loading too, instead of the spinner staying up for good.
+      .catch(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => { cancelled = true; };
   }, [target, sort, commentsCacheKey]);
 
@@ -426,14 +430,19 @@ export function TraktComments({ resolution }: { resolution: IdResolution | null 
     if (!target || loadingMore || !hasMore) return;
     setLoadingMore(true);
     const next = page + 1;
-    const data = await fetchComments(target, sort, next, COMMENTS_PAGE_SIZE);
-    setComments((prev) => {
-      const ids = new Set(prev.map((c) => c.id));
-      return [...prev, ...data.filter((c) => !ids.has(c.id))];
-    });
-    setPage(next);
-    setHasMore(data.length >= COMMENTS_PAGE_SIZE);
-    setLoadingMore(false);
+    try {
+      const data = await fetchComments(target, sort, next, COMMENTS_PAGE_SIZE);
+      setComments((prev) => {
+        const ids = new Set(prev.map((c) => c.id));
+        return [...prev, ...data.filter((c) => !ids.has(c.id))];
+      });
+      setPage(next);
+      setHasMore(data.length >= COMMENTS_PAGE_SIZE);
+    } catch {
+      // The request failed: the button comes back so it can be tried again.
+    } finally {
+      setLoadingMore(false);
+    }
   }, [target, sort, page, hasMore, loadingMore]);
 
   useEffect(() => {

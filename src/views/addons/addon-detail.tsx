@@ -56,7 +56,9 @@ export function AddonDetail({
   const c = resolved.curated;
   const isConfigurable =
     m?.behaviorHints?.configurable === true || m?.behaviorHints?.configurationRequired === true;
-  const web = isWeb();
+  // "Install default" installs the manifest as listed. An addon that says it cannot work until it
+  // is configured has no usable default, so it is only offered "Configure & install".
+  const canInstallDefault = isConfigurable && m?.behaviorHints?.configurationRequired !== true && !isWeb();
   const configureUrl = manifestToConfigureUrl(resolved.transportUrl);
   const stremioShareUrl = manifestToShareUrl(resolved.transportUrl, "stremio");
 
@@ -128,6 +130,7 @@ export function AddonDetail({
     try {
       await onInstall();
     } catch {
+      // The install did not happen (the error is already on screen): back to "Install".
       setOptimisticInstalled(null);
     } finally {
       setBusy(null);
@@ -198,7 +201,7 @@ export function AddonDetail({
   else if (installed) nativeButtons.push({ id: "remove", label: t("Installed"), style: "installed", icon: "check" });
   else if (isConfigurable) nativeButtons.push({ id: "configure", label: t("Configure & install"), style: "ink", icon: "settings" });
   else nativeButtons.push({ id: "install", label: t("Install"), style: "ink" });
-  if (!installed && isConfigurable && !busy && !web) nativeButtons.push({ id: "install", label: t("Install default"), style: "soft" });
+  if (!installed && canInstallDefault && !busy) nativeButtons.push({ id: "install", label: t("Install default"), style: "soft" });
   if (installed && isConfigurable && !busy) nativeButtons.push({ id: "configure", label: t("Reconfigure"), style: "soft", icon: "settings" });
   nativeButtons.push({ id: "copy", label: copied === "https" ? t("Copied") : t("Copy URL"), style: "soft", icon: copied === "https" ? "check" : "copy", copy: resolved.transportUrl });
   nativeButtons.push({ id: "stremio", label: copied === "stremio" ? t("Copied") : t("stremio:// link"), style: "soft", icon: copied === "stremio" ? "check" : "external", copy: stremioShareUrl });
@@ -382,7 +385,7 @@ export function AddonDetail({
                 {t("Install")}
               </button>
             )}
-            {!installed && isConfigurable && !busy && !web && (
+            {!installed && canInstallDefault && !busy && (
               <button
                 onClick={() => void handleInstall()}
                 className="flex h-11 items-center gap-2 rounded-full border border-edge-soft px-5 text-[13.5px] font-semibold text-ink-muted transition-colors hover:border-edge hover:text-ink"

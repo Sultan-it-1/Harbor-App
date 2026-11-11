@@ -139,23 +139,24 @@ export function QueueView() {
     extendingRef.current = true;
     const page = extensionPageRef.current;
     extensionPageRef.current = page + 1;
-    let cancelled = false;
+    // Not cancelled when the queue moves on (a skip) while the page loads: its number is already
+    // taken, so dropping the result would lose those titles for good. They are matched against
+    // the queue as it is when they arrive.
     void (async () => {
       try {
-        const more = await extendPool(settings.tmdbKey, page);
-        if (cancelled) return;
-        const existingIds = new Set(pool.map((p) => p.meta.id));
-        const fresh = more.filter((m) => !existingIds.has(m.meta.id));
-        const filtered = filterQueuePool(fresh);
-        if (filtered.length === 0) return;
-        setPool((p) => [...p, ...shuffleQueuePool(filtered)]);
+        const more = shuffleQueuePool(filterQueuePool(await extendPool(settings.tmdbKey, page)));
+        setPool((p) => {
+          const existingIds = new Set(p.map((it) => it.meta.id));
+          const fresh = more.filter((m) => !existingIds.has(m.meta.id));
+          return fresh.length === 0 ? p : [...p, ...fresh];
+        });
+      } catch {
+        // The page did not arrive: its number goes back, to be asked for again.
+        extensionPageRef.current = page;
       } finally {
         extendingRef.current = false;
       }
     })();
-    return () => {
-      cancelled = true;
-    };
   }, [loading, settings.tmdbKey, pool, activeIndex]);
 
   const onPrev = useCallback(() => {
